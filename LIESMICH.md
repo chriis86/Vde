@@ -21,8 +21,3 @@ Fertig – Icon „VDE-Prüfung" auf dem Startbildschirm, startet im Vollbild, a
 - Bluetooth-Druck: Etikett → „Drucker per Bluetooth hinzufügen".
   Druckbefehle (ESC/POS) in drucker.js → befehle() – ggf. ans Druckermodell anpassen.
 - Updates: geänderte Dateien wieder bei GitHub hochladen, in sw.js VERSION hochzählen.
-
-## Echte Android-App (APK)
-GitHub baut die APK automatisch bei jedem Hochladen (Datei .github/workflows/apk.yml).
-Download: https://github.com/chriis86/Vde-app/releases/latest → VDE-Pruefung.apk
-debug.keystore nicht löschen – sonst lassen sich Updates nicht über die alte App installieren.

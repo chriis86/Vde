@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1f3a5f">
 <title>VDE-Prüfung</title>
-<script src="capacitor.js" onerror="this.remove()"></script>
-<script src="nativ.js"></script>
 <script src="jsQR.js"></script>
 <script src="qrcode.js"></script>
 <script src="drucker.js"></script>
@@ -268,7 +266,6 @@ function menue() {
   if (!m.classList.contains("hidden")) window.scrollTo(0,0);
 }
 async function teilen(file) {
-  if (Nativ.ist) return Nativ.teilen(file).catch(e => toast("Teilen fehlgeschlagen: " + e.message));
   if (navigator.canShare?.({ files:[file] })) { try { await navigator.share({ files:[file], title:file.name }); } catch {} }
   else { const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click(); }
 }
@@ -391,7 +388,12 @@ function umbrechen(text, breite) {
 }
 async function etikettTeilen() {
   const blob = await new Promise(r => $("etikettCanvas").toBlob(r, "image/png"));
-  teilen(new File([blob], aktuell.nr + ".png", { type:"image/png" }));
+  const file = new File([blob], aktuell.nr + ".png", { type:"image/png" });
+  if (navigator.canShare?.({ files:[file] })) {
+    try { await navigator.share({ files:[file], title:aktuell.nr }); } catch {}
+  } else {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+  }
 }
 function druckerAnzeige() { $("druckerName").textContent = Drucker.name() || "nicht verbunden"; }
 async function druckerWaehlen() {
@@ -401,7 +403,7 @@ async function druckerWaehlen() {
 function druckerVergessen() { Drucker.trennen(); druckerAnzeige(); }
 async function etikettDrucken() {
   try {
-    if (!Drucker.name()) { await Drucker.verbinden(); druckerAnzeige(); }
+    if (!Drucker.verbunden()) { await Drucker.verbinden(); druckerAnzeige(); }
     toast("Drucke …");
     await Drucker.drucken($("etikettCanvas"));
     toast("Gedruckt ✓");
@@ -412,13 +414,7 @@ function localStorageGet(k) { try { return localStorage.getItem(k) || ""; } catc
 function localStorageSet(k,v) { try { localStorage.setItem(k,v); } catch {} }
 
 // Offline-Fähigkeit
-if (!Nativ.ist && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
-Nativ.zurueckTaste(() => {
-  if (stream) scanStoppen();
-  else if (!$("detail").classList.contains("hidden")) zeigeStart();
-  else if (!$("menue").classList.contains("hidden")) $("menue").classList.add("hidden");
-  else Nativ.beenden();
-});
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
 
 // Direktaufruf per Link: /?nr=XYZ  (praktisch, wenn der QR-Code eine URL enthält)
 const p = new URLSearchParams(location.search).get("nr");

@@ -1,57 +1,36 @@
-// Bluetooth-Etikettendruck.
-// - In der Android-App: über das Capacitor-Plugin "BluetoothLe"
-// - Im Browser (Chrome auf Android, https): über Web Bluetooth
-// Gesendet wird das Etikett als Rasterbild im ESC/POS-Format (GS v 0) – das verstehen viele
-// günstige Thermo-Etikettendrucker. Für Drucker mit eigenem Protokoll nur `befehle()` anpassen.
+// Bluetooth-Etikettendruck über Web Bluetooth (Chrome auf Android, HTTPS nötig).
+// Sendet das Etikett als Rasterbild im ESC/POS-Format (GS v 0) – das verstehen viele
+// günstige Thermo-Etikettendrucker (Phomemo-Familie u. ä.). Für Drucker mit eigenem
+// Protokoll muss nur die Funktion `befehle()` angepasst werden.
 const Drucker = (() => {
   // Bekannte BLE-Dienste günstiger Thermodrucker
   const DIENSTE = [
     0xff00, 0x18f0, 0xae30, 0xfee7, 0xae3a, 0xe0ff, 0xffe0,
     "49535343-fe7d-4ae5-8fa9-9fafd205e455",
     "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
+    "000018f0-0000-1000-8000-00805f9b34fb",
   ];
-  const voll = u => typeof u === "number"
-    ? "0000" + u.toString(16).padStart(4, "0") + "-0000-1000-8000-00805f9b34fb" : u.toLowerCase();
+  let geraet = null, kanal = null;
 
-  let geraet = null, kanal = null, verbundenFlag = false;
-  const nativ = () => typeof Nativ !== "undefined" && Nativ.ist;
-  const BLE = () => Nativ.plugin("BluetoothLe");
-
-  // ---------- Verbinden ----------
   async function verbinden() {
-    if (nativ()) {
-      await BLE().initialize();
-      const d = await BLE().requestDevice({ optionalServices: DIENSTE.map(voll) });
-      geraet = { name: d.name || d.deviceId, id: d.deviceId };
-    } else {
-      if (!navigator.bluetooth)
-        throw new Error("Bluetooth geht hier nicht – Chrome auf Android und HTTPS nötig");
-      geraet = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: DIENSTE });
-      geraet.addEventListener("gattserverdisconnected", () => { kanal = null; });
-    }
+    if (!navigator.bluetooth)
+      throw new Error("Bluetooth geht hier nicht – Chrome auf Android und HTTPS nötig");
+    geraet = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: DIENSTE });
+    geraet.addEventListener("gattserverdisconnected", () => { kanal = null; });
     await koppeln();
   }
 
   async function koppeln() {
-    if (nativ()) {
-      await BLE().connect({ deviceId: geraet.id }, () => { verbundenFlag = false; kanal = null; });
-      const { services } = await BLE().getServices({ deviceId: geraet.id });
-      for (const s of services) for (const c of s.characteristics) {
-        if (c.properties.writeWithoutResponse || c.properties.write) {
-          kanal = { service: s.uuid, characteristic: c.uuid, ohneAntwort: !!c.properties.writeWithoutResponse };
-          verbundenFlag = true; return;
-        }
+    const server = await geraet.gatt.connect();
+    for (const dienst of await server.getPrimaryServices()) {
+      for (const c of await dienst.getCharacteristics()) {
+        if (c.properties.writeWithoutResponse || c.properties.write) { kanal = c; return; }
       }
-    } else {
-      const server = await geraet.gatt.connect();
-      for (const dienst of await server.getPrimaryServices())
-        for (const c of await dienst.getCharacteristics())
-          if (c.properties.writeWithoutResponse || c.properties.write) { kanal = c; return; }
     }
     throw new Error("Kein Druckkanal gefunden – Druckermodell nicht unterstützt");
   }
 
-  // ---------- Canvas -> 1-Bit-Raster -> ESC/POS ----------
+  // Canvas -> 1-Bit-Raster -> ESC/POS
   function befehle(canvas) {
     const w = canvas.width, h = canvas.height, bpr = w / 8;
     const px = canvas.getContext("2d").getImageData(0, 0, w, h).data;
@@ -70,16 +49,12 @@ const Drucker = (() => {
   }
 
   async function senden(daten) {
-    const STUECK = 128, pause = () => new Promise(r => setTimeout(r, 20));
+    const STUECK = 128;
     for (let i = 0; i < daten.length; i += STUECK) {
       const teil = daten.slice(i, i + STUECK);
-      if (nativ()) {
-        const hex = Array.from(teil, b => b.toString(16).padStart(2, "0")).join("");
-        const p = { deviceId: geraet.id, service: kanal.service, characteristic: kanal.characteristic, value: hex };
-        if (kanal.ohneAntwort) { await BLE().writeWithoutResponse(p); await pause(); }
-        else await BLE().write(p);
-      } else if (kanal.properties.writeWithoutResponse) {
-        await kanal.writeValueWithoutResponse(teil); await pause();
+      if (kanal.properties.writeWithoutResponse) {
+        await kanal.writeValueWithoutResponse(teil);
+        await new Promise(r => setTimeout(r, 20));              // Drucker nicht überfluten
       } else {
         await kanal.writeValueWithResponse(teil);
       }
@@ -88,15 +63,14 @@ const Drucker = (() => {
 
   return {
     verbinden,
-    verbunden: () => nativ() ? !!(kanal && verbundenFlag) : !!(kanal && geraet?.gatt.connected),
+    verbunden: () => !!(kanal && geraet?.gatt.connected),
     name: () => geraet?.name || null,
-    trennen() {
-      try { nativ() ? BLE().disconnect({ deviceId: geraet.id }) : geraet?.gatt.disconnect(); } catch {}
-      geraet = kanal = null; verbundenFlag = false;
-    },
+    trennen() { try { geraet?.gatt.disconnect(); } catch {} geraet = kanal = null; },
     async drucken(canvas) {
-      if (!geraet) throw new Error("Erst Drucker hinzufügen");
-      if (!this.verbunden()) await koppeln();
+      if (!kanal) {
+        if (!geraet) throw new Error("Erst Drucker hinzufügen");
+        await koppeln();
+      }
       await senden(befehle(canvas));
     },
   };
