@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f3a5f">
+<title>VDE-Prüfung</title>
+<script src="capacitor.js" onerror="this.remove()"></script>
+<script src="nativ.js"></script>
+<script src="jsQR.js"></script>
+<script src="qrcode.js"></script>
+<script src="drucker.js"></script>
+<script src="speicher.js"></script>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root { --blau:#1f3a5f; --gruen:#1e8a4c; --rot:#c0392b; --gelb:#d68910; --grau:#f2f4f7; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--grau); color:#222; }
+  header { background:var(--blau); color:#fff; padding:12px 16px; display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:5; }
+  header h1 { font-size:18px; margin:0; flex:1; }
+  header button { background:none; border:0; color:#fff; font-size:22px; }
+  main { padding:12px; max-width:640px; margin:auto; }
+  .karte { background:#fff; border-radius:10px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px #0002; }
+  .gross { width:100%; padding:16px; font-size:18px; border:0; border-radius:10px; background:var(--blau); color:#fff; font-weight:600; }
+  .btn { padding:10px 14px; border:0; border-radius:8px; background:var(--blau); color:#fff; font-size:15px; }
+  .btn.hell { background:#dfe5ee; color:var(--blau); }
+  .btn.rot { background:var(--rot); }
+  label { display:block; font-size:13px; color:#555; margin-top:10px; }
+  input, select, textarea { width:100%; padding:10px; font-size:16px; border:1px solid #ccd; border-radius:8px; background:#fff; }
+  .zeile { display:flex; gap:8px; } .zeile > * { flex:1; }
+  .check { display:flex; align-items:center; gap:10px; margin-top:12px; font-size:16px; }
+  .check input { width:24px; height:24px; }
+  .geraet { display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #eee; }
+  .geraet:last-child { border:0; }
+  .badge { font-size:12px; padding:3px 8px; border-radius:20px; color:#fff; white-space:nowrap; }
+  .ok{background:var(--gruen)} .bald{background:var(--gelb)} .faellig,.gesperrt{background:var(--rot)} .neu{background:#888}
+  .wert { font-size:12px; margin-top:3px; } .wert.gut{color:var(--gruen)} .wert.schlecht{color:var(--rot);font-weight:600}
+  #video { width:100%; border-radius:10px; background:#000; }
+  .ergebnis { padding:12px; border-radius:8px; text-align:center; font-weight:700; font-size:18px; margin-top:12px; color:#fff; }
+  .klein { font-size:13px; color:#666; }
+  .hist { border-left:4px solid var(--gruen); padding:6px 10px; margin:8px 0; background:#fafafa; font-size:14px; }
+  .hist.nicht { border-color:var(--rot); }
+  #etikettCanvas { max-width:100%; border:1px dashed #999; background:#fff; image-rendering:pixelated; display:block; margin:10px auto; }
+  #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#333; color:#fff; padding:10px 18px; border-radius:20px; display:none; z-index:10; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <button id="zurueck" class="hidden" onclick="zeigeStart()">‹</button>
+  <h1 id="titel">VDE-Prüfung</h1>
+  <button onclick="menue()" title="Menü">☰</button>
+</header>
+
+<main>
+  <!-- ===== MENÜ ===== -->
+  <section id="menue" class="karte hidden">
+    <strong>Daten & Einstellungen</strong>
+    <div style="display:grid;gap:8px;margin-top:10px">
+      <button class="btn" onclick="exportCSV()">📊 Prüfliste als CSV (Excel) teilen</button>
+      <button class="btn" onclick="sicherungTeilen()">💾 Sicherung erstellen (alle Daten)</button>
+      <button class="btn hell" onclick="$('wiederFile').click()">♻ Sicherung einspielen</button>
+      <input type="file" id="wiederFile" accept=".json,application/json" class="hidden">
+    </div>
+    <label>Präfix für neue Nummern</label>
+    <input id="praefix" placeholder="VDE-" onchange="Speicher.einst('praefix', this.value)">
+    <p class="klein">Alle Daten liegen nur auf diesem Handy. Erstelle regelmäßig eine Sicherung
+      (z. B. nach Google Drive oder per Mail), damit beim Handy-Verlust nichts weg ist.</p>
+  </section>
+
+  <!-- ===== START ===== -->
+  <section id="start">
+    <div class="karte">
+      <button class="gross" onclick="scanStarten()">📷 QR-Code scannen</button>
+      <button class="gross" style="margin-top:8px;background:var(--gruen)" onclick="neuesGeraet()">＋ Neues Gerät (mit Nummer)</button>
+      <div id="scanBox" class="hidden" style="margin-top:12px">
+        <video id="video" playsinline muted></video>
+        <button class="btn hell" style="width:100%;margin-top:8px" onclick="scanStoppen()">Abbrechen</button>
+      </div>
+      <input type="file" id="foto" accept="image/*" capture="environment" class="hidden">
+      <div class="zeile" style="margin-top:12px">
+        <input id="manuell" placeholder="oder Nummer eingeben">
+        <button class="btn" style="flex:0" onclick="oeffne(document.getElementById('manuell').value)">→</button>
+      </div>
+    </div>
+    <div class="karte">
+      <div class="zeile" style="align-items:center">
+        <strong>Geräte</strong>
+        <input id="suche" placeholder="Suchen…" oninput="zeigeListe()" style="flex:2">
+      </div>
+      <div id="liste"></div>
+    </div>
+  </section>
+
+  <!-- ===== GERÄT ===== -->
+  <section id="detail" class="hidden">
+    <div class="karte">
+      <div class="klein">Nr. / QR: <strong id="dNr"></strong> <span id="dStatus"></span></div>
+      <label>Bezeichnung *</label><input id="g_bezeichnung" placeholder="z. B. Bohrmaschine">
+      <div class="zeile">
+        <div><label>Hersteller</label><input id="g_hersteller"></div>
+        <div><label>Typ</label><input id="g_typ"></div>
+      </div>
+      <label>Seriennummer</label><input id="g_seriennr">
+      <div class="zeile">
+        <div><label>Standort</label><input id="g_standort"></div>
+        <div><label>Kunde</label><input id="g_kunde"></div>
+      </div>
+      <div class="zeile">
+        <div><label>Schutzklasse</label>
+          <select id="g_schutzklasse" onchange="bewerten()">
+            <option value="I">SK I (Schutzleiter)</option>
+            <option value="II">SK II (schutzisoliert)</option>
+            <option value="III">SK III (Schutzkleinspannung)</option>
+          </select></div>
+        <div><label>Intervall (Monate)</label><input id="g_intervall_monate" type="number" value="12"></div>
+      </div>
+      <div class="zeile" style="margin-top:14px">
+        <button class="btn" onclick="geraetSpeichern()">💾 Gerät speichern</button>
+        <button class="btn rot" style="flex:0" onclick="geraetLoeschen()">🗑</button>
+      </div>
+    </div>
+
+    <div class="karte" id="etikettKarte">
+      <strong>🏷 Etikett</strong>
+      <div class="zeile">
+        <div><label>Etikettengröße</label>
+          <select id="e_groesse" onchange="etikettZeichnen()">
+            <option value="40x30">40 × 30 mm</option>
+            <option value="50x30">50 × 30 mm</option>
+            <option value="40x20">40 × 20 mm</option>
+            <option value="30x15">30 × 15 mm</option>
+            <option value="15x30">15 mm Band (P22)</option>
+          </select></div>
+        <div><label>Text</label>
+          <select id="e_text" onchange="etikettZeichnen()">
+            <option value="nr+bez">Nummer + Bezeichnung</option>
+            <option value="nr">nur Nummer</option>
+          </select></div>
+      </div>
+      <canvas id="etikettCanvas"></canvas>
+      <div class="zeile">
+        <button class="btn" onclick="etikettDrucken()">🖨 Drucken</button>
+        <button class="btn hell" onclick="etikettTeilen()">📤 Teilen / Speichern</button>
+      </div>
+      <div class="klein" style="margin-top:8px">Drucker: <span id="druckerName">nicht verbunden</span>
+        · <a href="#" onclick="druckerWaehlen();return false">Drucker per Bluetooth hinzufügen</a>
+        · <a href="#" onclick="druckerVergessen();return false">trennen</a></div>
+    </div>
+
+    <div class="karte" id="pruefKarte">
+      <strong>Neue Prüfung (VDE 0701-0702)</strong>
+      <div class="zeile">
+        <div><label>Datum</label><input id="p_datum" type="date"></div>
+        <div><label>Prüfer</label><input id="p_pruefer"></div>
+      </div>
+      <div class="check"><input type="checkbox" id="p_sicht" onchange="bewerten()"> Sichtprüfung ohne Mangel</div>
+      <div id="feldRpe"><label>Schutzleiterwiderstand R<sub>PE</sub> [Ω]</label>
+        <input id="p_rpe" inputmode="decimal" oninput="bewerten()"><div class="wert" id="w_rpe"></div></div>
+      <label>Isolationswiderstand R<sub>ISO</sub> [MΩ]</label>
+      <input id="p_riso" inputmode="decimal" oninput="bewerten()"><div class="wert" id="w_riso"></div>
+      <div id="feldIpe"><label>Schutzleiterstrom I<sub>PE</sub> [mA]</label>
+        <input id="p_ipe" inputmode="decimal" oninput="bewerten()"><div class="wert" id="w_ipe"></div></div>
+      <label>Berührungsstrom I<sub>B</sub> [mA]</label>
+      <input id="p_ib" inputmode="decimal" oninput="bewerten()"><div class="wert" id="w_ib"></div>
+      <div class="check"><input type="checkbox" id="p_funktion" onchange="bewerten()"> Funktionsprüfung i. O.</div>
+      <label>Bemerkung</label><textarea id="p_bemerkung" rows="2"></textarea>
+      <div id="ergebnis" class="ergebnis neu">Werte eingeben</div>
+      <label class="check"><input type="checkbox" id="p_manuell"> Ergebnis manuell überschreiben → bestanden</label>
+      <button class="gross" style="margin-top:12px" onclick="pruefungSpeichern()">✔ Prüfung speichern</button>
+      <p class="klein">Grenzwerte als Hilfe (Standardfall, Leitung ≤ 5 m). Die Bewertung trifft immer die Elektrofachkraft.</p>
+    </div>
+
+    <div class="karte"><strong>Prüfhistorie</strong><div id="historie" class="klein">–</div></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let geraete = [], aktuell = null, stream = null, scanTimer = null;
+const STATUS = { ok:"OK", bald:"bald fällig", faellig:"überfällig", gesperrt:"gesperrt", neu:"ungeprüft" };
+
+function toast(t) { const e=$("toast"); e.textContent=t; e.style.display="block"; setTimeout(()=>e.style.display="none",2200); }
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = d => d ? d.split("-").reverse().join(".") : "–";
+
+// ---------- Liste ----------
+async function ladeListe() { geraete = (await api("/api/geraete")).data; zeigeListe(); }
+function zeigeListe() {
+  const q = $("suche").value.toLowerCase();
+  const rang = { gesperrt:0, faellig:1, bald:2, neu:3, ok:4 };
+  const l = geraete.filter(g => (g.nr+" "+g.bezeichnung+" "+(g.standort||"")+" "+(g.kunde||"")).toLowerCase().includes(q))
+                   .sort((a,b) => rang[a.status]-rang[b.status]);
+  $("liste").innerHTML = l.length ? l.map(g => `
+    <div class="geraet" onclick="oeffne('${esc(g.nr).replace(/'/g,"\\'")}')">
+      <div><strong>${esc(g.bezeichnung)}</strong><div class="klein">${[esc(g.nr), esc(g.standort||""), "nächste: "+fmt(g.naechste_pruefung)].filter(Boolean).join(" · ")}</div></div>
+      <span class="badge ${g.status}">${STATUS[g.status]}</span>
+    </div>`).join("") : '<p class="klein">Noch keine Geräte – QR-Code scannen oder „Neues Gerät".</p>';
+}
+
+// ---------- Scanner ----------
+async function scanStarten() {
+  // Live-Kamera geht nur über HTTPS (oder localhost). Sonst: Foto aufnehmen.
+  if (!window.isSecureContext || !navigator.mediaDevices) { $("foto").click(); return; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" } });
+  } catch(e) { $("foto").click(); return; }
+  $("scanBox").classList.remove("hidden");
+  const v = $("video"); v.srcObject = stream; await v.play();
+  const c = document.createElement("canvas"), ctx = c.getContext("2d", { willReadFrequently:true });
+  scanTimer = setInterval(() => {
+    if (v.readyState < 2) return;
+    c.width = v.videoWidth; c.height = v.videoHeight; ctx.drawImage(v, 0, 0);
+    const code = jsQR(ctx.getImageData(0,0,c.width,c.height).data, c.width, c.height);
+    if (code && code.data) { navigator.vibrate?.(100); scanStoppen(); oeffne(code.data); }
+  }, 250);
+}
+function scanStoppen() {
+  clearInterval(scanTimer); stream?.getTracks().forEach(t => t.stop()); stream = null;
+  $("scanBox").classList.add("hidden");
+}
+$("foto").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => {
+    const s = Math.min(1, 1200 / Math.max(img.width, img.height));
+    const c = document.createElement("canvas"); c.width = img.width*s; c.height = img.height*s;
+    const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, c.width, c.height);
+    const code = jsQR(ctx.getImageData(0,0,c.width,c.height).data, c.width, c.height);
+    URL.revokeObjectURL(img.src); e.target.value = "";
+    code ? oeffne(code.data) : toast("Kein QR-Code erkannt – näher ran & scharf stellen");
+  };
+  img.src = URL.createObjectURL(f);
+});
+
+// ---------- Gerät ----------
+const GF = ["bezeichnung","hersteller","typ","seriennr","standort","kunde","schutzklasse","intervall_monate"];
+async function oeffne(nr) {
+  nr = (nr||"").trim(); if (!nr) return;
+  try { const u = new URL(nr); if (u.searchParams.get("nr")) nr = u.searchParams.get("nr"); } catch {}
+  const { status, data } = await api("/api/geraete/" + encodeURIComponent(nr));
+  aktuell = status === 404 ? { nr, neu:true, pruefungen:[] } : data;
+  $("menue").classList.add("hidden");
+  $("start").classList.add("hidden"); $("detail").classList.remove("hidden"); $("zurueck").classList.remove("hidden");
+  $("titel").textContent = aktuell.neu ? "Neues Gerät" : aktuell.bezeichnung;
+  $("dNr").textContent = nr;
+  $("dStatus").innerHTML = aktuell.neu ? "" : `<span class="badge ${aktuell.status}">${STATUS[aktuell.status]}</span>`;
+  GF.forEach(f => $("g_"+f).value = aktuell[f] ?? (f==="schutzklasse" ? "I" : f==="intervall_monate" ? 12 : ""));
+  $("pruefKarte").classList.toggle("hidden", !!aktuell.neu);
+  ["rpe","riso","ipe","ib","bemerkung"].forEach(f => $("p_"+f).value = "");
+  $("p_sicht").checked = $("p_funktion").checked = $("p_manuell").checked = false;
+  $("p_datum").value = new Date().toISOString().slice(0,10);
+  $("p_pruefer").value = localStorageGet("pruefer");
+  $("etikettKarte").classList.toggle("hidden", !!aktuell.neu);
+  $("e_groesse").value = localStorageGet("etikett") || "40x30";
+  zeigeHistorie(); bewerten(); etikettZeichnen(); druckerAnzeige(); window.scrollTo(0,0);
+  if (aktuell.neu) { toast("Unbekannter Code – Gerät anlegen"); $("g_bezeichnung").focus(); }
+}
+async function neuesGeraet() {
+  const { data } = await api("/api/naechste-nr");
+  await oeffne(data.nr);
+}
+function menue() {
+  const m = $("menue"); m.classList.toggle("hidden"); $("praefix").value = Speicher.einst("praefix");
+  if (!m.classList.contains("hidden")) window.scrollTo(0,0);
+}
+async function teilen(file) {
+  if (Nativ.ist) return Nativ.teilen(file).catch(e => toast("Teilen fehlgeschlagen: " + e.message));
+  if (navigator.canShare?.({ files:[file] })) { try { await navigator.share({ files:[file], title:file.name }); } catch {} }
+  else { const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click(); }
+}
+async function exportCSV() { teilen(await Speicher.csv()); }
+async function sicherungTeilen() { teilen(await Speicher.sicherung()); }
+$("wiederFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { const n = await Speicher.wiederherstellen(f); toast(n + " Geräte eingespielt"); ladeListe(); }
+  catch(err) { toast("Datei nicht lesbar"); }
+  e.target.value = "";
+});
+function zeigeStart() {
+  $("detail").classList.add("hidden"); $("start").classList.remove("hidden"); $("zurueck").classList.add("hidden");
+  $("titel").textContent = "VDE-Prüfung"; ladeListe();
+}
+async function geraetSpeichern() {
+  const body = {}; GF.forEach(f => body[f] = $("g_"+f).value.trim());
+  if (!body.bezeichnung) return toast("Bezeichnung fehlt");
+  body.intervall_monate = parseInt(body.intervall_monate) || 12;
+  try { await api("/api/geraete/" + encodeURIComponent(aktuell.nr), { method:"PUT", body:JSON.stringify(body) });
+        toast("Gespeichert"); oeffne(aktuell.nr); } catch(e) { toast("Fehler: "+e.message); }
+}
+async function geraetLoeschen() {
+  if (aktuell.neu || !confirm("Gerät und alle Prüfungen löschen?")) return;
+  await api("/api/geraete/" + encodeURIComponent(aktuell.nr), { method:"DELETE" }); toast("Gelöscht"); zeigeStart();
+}
+function zeigeHistorie() {
+  const p = aktuell.pruefungen || [];
+  $("historie").innerHTML = p.length ? p.map(x => `
+    <div class="hist ${x.bestanden ? "" : "nicht"}"><strong>${fmt(x.datum)}</strong> – ${x.bestanden ? "bestanden" : "NICHT bestanden"} ${x.pruefer ? "· "+esc(x.pruefer) : ""}<br>
+    RPE ${x.rpe ?? "–"} Ω · RISO ${x.riso ?? "–"} MΩ · IPE ${x.ipe ?? "–"} mA · IB ${x.ib ?? "–"} mA
+    ${x.bemerkung ? "<br><em>"+esc(x.bemerkung)+"</em>" : ""}</div>`).join("") : "Noch keine Prüfung.";
+}
+
+// ---------- Bewertung (Standard-Grenzwerte VDE 0701-0702) ----------
+const zahl = id => { const v = $(id).value.replace(",", "."); return v === "" ? null : parseFloat(v); };
+function pruefe(id, wert, ok, text) {
+  const e = $(id); if (wert === null) { e.textContent = ""; return null; }
+  e.className = "wert " + (ok ? "gut" : "schlecht"); e.textContent = (ok ? "✓ " : "✗ ") + text; return ok;
+}
+function bewerten() {
+  const sk = $("g_schutzklasse").value;
+  $("feldRpe").classList.toggle("hidden", sk !== "I");
+  $("feldIpe").classList.toggle("hidden", sk !== "I");
+  const r = [];
+  if (sk === "I") {
+    r.push(pruefe("w_rpe", zahl("p_rpe"), zahl("p_rpe") <= 0.3, "Grenzwert ≤ 0,3 Ω"));
+    r.push(pruefe("w_ipe", zahl("p_ipe"), zahl("p_ipe") <= 3.5, "Grenzwert ≤ 3,5 mA"));
+  }
+  const isoMin = sk === "I" ? 1 : sk === "II" ? 2 : 0.25;
+  r.push(pruefe("w_riso", zahl("p_riso"), zahl("p_riso") >= isoMin, `Grenzwert ≥ ${String(isoMin).replace(".",",")} MΩ`));
+  r.push(pruefe("w_ib", zahl("p_ib"), zahl("p_ib") <= 0.5, "Grenzwert ≤ 0,5 mA"));
+  const messung = r.filter(x => x !== null);
+  const bestanden = $("p_sicht").checked && $("p_funktion").checked && messung.length > 0 && messung.every(Boolean);
+  const e = $("ergebnis");
+  if (messung.includes(false)) { e.className="ergebnis gesperrt"; e.textContent="✗ Nicht bestanden"; }
+  else if (bestanden) { e.className="ergebnis ok"; e.textContent="✓ Bestanden"; }
+  else { e.className="ergebnis neu"; e.textContent = messung.length ? "Sicht-/Funktionsprüfung fehlt" : "Werte eingeben"; }
+  return bestanden;
+}
+async function pruefungSpeichern() {
+  const bestanden = bewerten() || $("p_manuell").checked;
+  const body = {
+    datum:$("p_datum").value, pruefer:$("p_pruefer").value.trim(),
+    sichtpruefung:$("p_sicht").checked, funktion:$("p_funktion").checked,
+    rpe:$("p_rpe").value, riso:$("p_riso").value, ipe:$("p_ipe").value, ib:$("p_ib").value,
+    bemerkung:$("p_bemerkung").value.trim(), bestanden
+  };
+  if (!bestanden && !confirm("Prüfung als NICHT BESTANDEN speichern? Das Gerät wird gesperrt.")) return;
+  localStorageSet("pruefer", body.pruefer);
+  try { await api(`/api/geraete/${encodeURIComponent(aktuell.nr)}/pruefungen`, { method:"POST", body:JSON.stringify(body) });
+        toast("Prüfung gespeichert"); oeffne(aktuell.nr); } catch(e) { toast("Fehler: "+e.message); }
+}
+// ---------- Etikett ----------
+function etikettZeichnen() {
+  if (!aktuell || aktuell.neu) return;
+  localStorageSet("etikett", $("e_groesse").value);
+  const [bmm, hmm] = $("e_groesse").value.split("x").map(Number);
+  const DOT = 8;                                   // 203 dpi = 8 Punkte pro mm
+  const W = Math.ceil(bmm*DOT/8)*8, H = hmm*DOT;   // Breite auf volle Bytes runden
+  const c = $("etikettCanvas"), ctx = c.getContext("2d");
+  c.width = W; c.height = H;
+  ctx.fillStyle = "#fff"; ctx.fillRect(0,0,W,H); ctx.fillStyle = "#000";
+
+  const qr = qrcode(0, "M"); qr.addData(aktuell.nr); qr.make();
+  const n = qr.getModuleCount() + 4;               // +4 = Ruhezone (2 Module je Seite)
+  const hoch = W < H;                              // schmales Band: QR oben, Text darunter
+  const platz = hoch ? W : Math.min(H, W*0.55);
+  const m = Math.max(1, Math.floor(platz / n)), q = m*n;
+  const qx = hoch ? Math.floor((W-q)/2) : 0, qy = hoch ? 0 : Math.floor((H-q)/2);
+  for (let r=0; r<n-4; r++) for (let k=0; k<n-4; k++)
+    if (qr.isDark(r,k)) ctx.fillRect(qx+(k+2)*m, qy+(r+2)*m, m, m);
+
+  // Text rechts neben (bzw. unter) dem QR-Code, automatisch verkleinert und umbrochen
+  const tx = hoch ? 4 : q, tb = W - tx - 4;
+  let ty = hoch ? q : DOT, unten = H - 4;
+  const schreib = (text, fs, fett, maxZeilen) => {
+    let zeilen;
+    for (;; fs--) {
+      ctx.font = `${fett?"bold ":""}${fs}px sans-serif`;
+      zeilen = umbrechen(text, tb);
+      if ((zeilen.length <= maxZeilen && zeilen.every(z => ctx.measureText(z).width <= tb)) || fs <= 10) break;
+    }
+    ctx.textBaseline = "top";
+    for (const z of zeilen.slice(0, maxZeilen)) { if (ty + fs > unten) break; ctx.fillText(z, tx, ty); ty += fs*1.2; }
+    ty += fs*0.3;
+  };
+  schreib(aktuell.nr, Math.min(4*DOT, H/4), true, 1);
+  if ($("e_text").value === "nr+bez" && aktuell.bezeichnung) schreib(aktuell.bezeichnung, Math.min(3*DOT, H/6), false, hoch ? 3 : 3);
+}
+function umbrechen(text, breite) {
+  const ctx = $("etikettCanvas").getContext("2d"), zeilen = [];
+  let z = "";
+  for (const w of text.split(/\s+/)) {
+    const t = z ? z + " " + w : w;
+    if (ctx.measureText(t).width <= breite || !z) z = t; else { zeilen.push(z); z = w; }
+  }
+  if (z) zeilen.push(z);
+  return zeilen;
+}
+async function etikettTeilen() {
+  const blob = await new Promise(r => $("etikettCanvas").toBlob(r, "image/png"));
+  teilen(new File([blob], aktuell.nr + ".png", { type:"image/png" }));
+}
+function druckerAnzeige() { $("druckerName").textContent = Drucker.name() || "nicht verbunden"; }
+async function druckerWaehlen() {
+  try { await Drucker.verbinden(); druckerAnzeige(); toast("Drucker verbunden"); }
+  catch(e) { toast(e.message); }
+}
+function druckerVergessen() { Drucker.trennen(); druckerAnzeige(); }
+async function etikettDrucken() {
+  try {
+    if (!Drucker.name()) { await Drucker.verbinden(); druckerAnzeige(); }
+    toast("Drucke …");
+    await Drucker.drucken($("etikettCanvas"));
+    toast("Gedruckt ✓");
+  } catch(e) { toast(e.message); }
+}
+
+function localStorageGet(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } }
+function localStorageSet(k,v) { try { localStorage.setItem(k,v); } catch {} }
+
+// Offline-Fähigkeit
+if (!Nativ.ist && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+Nativ.zurueckTaste(() => {
+  if (stream) scanStoppen();
+  else if (!$("detail").classList.contains("hidden")) zeigeStart();
+  else if (!$("menue").classList.contains("hidden")) $("menue").classList.add("hidden");
+  else Nativ.beenden();
+});
+
+// Direktaufruf per Link: /?nr=XYZ  (praktisch, wenn der QR-Code eine URL enthält)
+const p = new URLSearchParams(location.search).get("nr");
+p ? oeffne(p) : ladeListe();
+</script>
+</body>
+</html>
