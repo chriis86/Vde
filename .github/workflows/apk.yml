@@ -1,0 +1,49 @@
+name: APK bauen
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Android-Projekt erzeugen
+        run: |
+          mkdir -p build/www && cd build
+          cp ../index.html ../*.js ../*.png ../manifest.webmanifest www/
+          rm -f www/sw.js
+          npm init -y > /dev/null
+          npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8 @capacitor/app@8 @capacitor/filesystem@8 @capacitor/share@8 @capacitor-community/bluetooth-le@8
+          cp node_modules/@capacitor/core/dist/capacitor.js www/
+          echo '{"appId":"de.chriis86.vdepruefung","appName":"VDE-Prüfung","webDir":"www"}' > capacitor.config.json
+          npx cap add android
+          sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.CAMERA" />#' android/app/src/main/AndroidManifest.xml
+          RES=android/app/src/main/res
+          rm -rf $RES/mipmap-anydpi-v26
+          for d in $RES/mipmap-*; do cp ../icon-192.png $d/ic_launcher.png; cp ../icon-192.png $d/ic_launcher_round.png; done
+          npx cap sync android
+      - name: APK bauen
+        run: |
+          mkdir -p ~/.android
+          cp debug.keystore ~/.android/debug.keystore
+          cd build/android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../../VDE-Pruefung.apk
+      - name: Als Download veroeffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: VDE-Pruefung ${{ github.run_number }}
+          files: VDE-Pruefung.apk
+          make_latest: true
