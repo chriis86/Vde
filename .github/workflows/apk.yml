@@ -9,18 +9,19 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
       - name: Android-Projekt erzeugen
         run: |
           mkdir -p build/www && cd build
-          cp ../index.html ../*.js ../*.png ../manifest.webmanifest www/
+          cp ../*.html ../*.js www/
+          cp ../*.png ../*.webmanifest www/ 2>/dev/null || true
           rm -f www/sw.js
           npm init -y > /dev/null
           npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8 @capacitor/app@8 @capacitor/filesystem@8 @capacitor/share@8 @capacitor-community/bluetooth-le@8
@@ -28,14 +29,16 @@ jobs:
           echo '{"appId":"de.chriis86.vdepruefung","appName":"VDE-Prüfung","webDir":"www"}' > capacitor.config.json
           npx cap add android
           sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.CAMERA" />#' android/app/src/main/AndroidManifest.xml
-          RES=android/app/src/main/res
-          rm -rf $RES/mipmap-anydpi-v26
-          for d in $RES/mipmap-*; do cp ../icon-192.png $d/ic_launcher.png; cp ../icon-192.png $d/ic_launcher_round.png; done
+          if [ -f ../icon-192.png ]; then
+            RES=android/app/src/main/res
+            rm -rf $RES/mipmap-anydpi-v26
+            for d in $RES/mipmap-*; do cp ../icon-192.png $d/ic_launcher.png; cp ../icon-192.png $d/ic_launcher_round.png; done
+          fi
           npx cap sync android
       - name: APK bauen
         run: |
           mkdir -p ~/.android
-          cp debug.keystore ~/.android/debug.keystore
+          if [ -f debug.keystore ]; then cp debug.keystore ~/.android/debug.keystore; fi
           cd build/android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
