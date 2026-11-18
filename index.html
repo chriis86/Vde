@@ -72,11 +72,15 @@
   <section id="menue" class="karte hidden">
     <strong>Daten & Einstellungen</strong>
     <div style="display:grid;gap:8px;margin-top:10px">
-      <button class="btn" onclick="exportCSV()">📊 Prüfliste als CSV (Excel) teilen</button>
+      <button class="btn" onclick="exportCSV()">📊 Prüfliste als CSV (Excel) – alle Kunden</button>
+      <button class="btn" id="csvKundeBtn" onclick="exportCSV(Speicher.Register.einsatz().kunde)">📊 CSV nur aktueller Kunde</button>
       <button class="btn" onclick="sicherungTeilen()">💾 Sicherung erstellen (alle Daten)</button>
       <button class="btn hell" onclick="$('wiederFile').click()">♻ Sicherung einspielen</button>
       <input type="file" id="wiederFile" accept=".json,application/json" class="hidden">
     </div>
+    <label>Prüfer (wird bei jeder Prüfung eingetragen)</label>
+    <input id="e_pruefer" placeholder="Vor- und Nachname" onchange="Speicher.Register.setzePruefer(this.value); toast('Prüfer gespeichert')">
+    <button class="btn hell" style="width:100%;margin-top:12px" onclick="zeigeKunden()">👥 Kunden & Standorte verwalten</button>
     <label>Drucksprache</label>
     <select id="druckmodus" onchange="localStorageSet('druckmodus', this.value); Drucker.trennen(); druckerAnzeige(); toast('Drucker neu hinzufügen')">
       <option value="auto">Automatisch erkennen</option>
@@ -105,6 +109,18 @@
       (z. B. nach Google Drive oder per Mail), damit beim Handy-Verlust nichts weg ist.</p>
   </section>
 
+  <!-- ===== KUNDEN ===== -->
+  <section id="kunden" class="hidden">
+    <div class="karte">
+      <strong>Neuer Kunde</strong>
+      <div class="zeile" style="margin-top:8px">
+        <input id="k_neu" placeholder="Name des Kunden">
+        <button class="btn" style="flex:0" onclick="kundeAnlegen()">＋</button>
+      </div>
+    </div>
+    <div id="kundenListe"></div>
+  </section>
+
   <!-- ===== START ===== -->
   <section id="start">
     <div class="karte">
@@ -120,11 +136,22 @@
         <button class="btn" style="flex:0" onclick="oeffne(document.getElementById('manuell').value)">→</button>
       </div>
     </div>
+    <div class="karte" id="einsatzKarte">
+      <strong>📍 Aktueller Einsatz</strong>
+      <span class="klein"> – neue Geräte bekommen Kunde & Standort automatisch</span>
+      <div class="zeile">
+        <div><label>Kunde</label>
+          <select id="ein_kunde" onchange="einsatzKundeGeaendert()"></select></div>
+        <div><label>Standort</label>
+          <select id="ein_standort" onchange="einsatzSpeichern()"></select></div>
+      </div>
+    </div>
     <div class="karte">
       <div class="zeile" style="align-items:center">
         <strong>Geräte</strong>
         <input id="suche" placeholder="Suchen…" oninput="zeigeListe()" style="flex:2">
       </div>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="nurEinsatz" onchange="zeigeListe()" checked> nur Geräte des aktuellen Kunden</label>
       <div id="liste"></div>
     </div>
   </section>
@@ -140,8 +167,8 @@
       </div>
       <label>Seriennummer</label><input id="g_seriennr">
       <div class="zeile">
-        <div><label>Standort</label><input id="g_standort"></div>
-        <div><label>Kunde</label><input id="g_kunde"></div>
+        <div><label>Kunde</label><input id="g_kunde" list="dl_kunden" oninput="fuelleStandortVorschlaege()"></div>
+        <div><label>Standort</label><input id="g_standort" list="dl_standorte"></div>
       </div>
       <div class="zeile">
         <div><label>Schutzklasse</label>
@@ -208,7 +235,19 @@
     </div>
 
     <div class="karte" id="pruefKarte">
-      <strong>Neue Prüfung (VDE 0701-0702)</strong>
+      <strong id="pruefTitel">Neue Prüfung (VDE 0701-0702)</strong>
+      <label class="check" style="background:#fff8e1;padding:8px;border-radius:8px">
+        <input type="checkbox" id="p_nachtrag" onchange="nachtragModus()"> 📜 Altes Protokoll nachtragen</label>
+      <div id="nachtragBox" class="hidden" style="background:#fff8e1;padding:10px;border-radius:8px;margin-top:8px">
+        <div class="klein">Ergebnis laut Papierprotokoll. Messwerte sind freiwillig.</div>
+        <div class="zeile" style="margin-top:8px">
+          <label class="check" style="margin:0"><input type="radio" name="p_erg" id="p_erg_ok" checked> bestanden</label>
+          <label class="check" style="margin:0"><input type="radio" name="p_erg" id="p_erg_nein"> nicht bestanden</label>
+        </div>
+        <label>Foto vom Protokoll (optional)</label>
+        <input type="file" id="p_foto" accept="image/*" onchange="fotoGewaehlt(this)">
+        <img id="p_fotoVorschau" class="hidden" style="max-width:100%;margin-top:8px;border-radius:6px">
+      </div>
       <div class="zeile">
         <div><label>Datum</label><input id="p_datum" type="date"></div>
         <div><label>Prüfer</label><input id="p_pruefer"></div>
@@ -224,8 +263,10 @@
       <input id="p_ib" inputmode="decimal" oninput="bewerten()"><div class="wert" id="w_ib"></div>
       <div class="check"><input type="checkbox" id="p_funktion" onchange="bewerten()"> Funktionsprüfung i. O.</div>
       <label>Bemerkung</label><textarea id="p_bemerkung" rows="2"></textarea>
-      <div id="ergebnis" class="ergebnis neu">Werte eingeben</div>
-      <label class="check"><input type="checkbox" id="p_manuell"> Ergebnis manuell überschreiben → bestanden</label>
+      <div id="neuBewertung">
+        <div id="ergebnis" class="ergebnis neu">Werte eingeben</div>
+        <label class="check"><input type="checkbox" id="p_manuell"> Ergebnis manuell überschreiben → bestanden</label>
+      </div>
       <button class="gross" style="margin-top:12px" onclick="pruefungSpeichern()">✔ Prüfung speichern</button>
       <p class="klein">Grenzwerte als Hilfe (Standardfall, Leitung ≤ 5 m). Die Bewertung trifft immer die Elektrofachkraft.</p>
     </div>
@@ -233,6 +274,7 @@
     <div class="karte"><strong>Prüfhistorie</strong><div id="historie" class="klein">–</div></div>
   </section>
 </main>
+<datalist id="dl_kunden"></datalist><datalist id="dl_standorte"></datalist>
 <div id="toast"></div>
 
 <script>
@@ -249,11 +291,14 @@ async function ladeListe() { geraete = (await api("/api/geraete")).data; zeigeLi
 function zeigeListe() {
   const q = $("suche").value.toLowerCase();
   const rang = { gesperrt:0, faellig:1, bald:2, neu:3, ok:4 };
-  const l = geraete.filter(g => (g.nr+" "+g.bezeichnung+" "+(g.standort||"")+" "+(g.kunde||"")).toLowerCase().includes(q))
+  const ek = Speicher.Register.einsatz().kunde, filtern = ek && $("nurEinsatz").checked;
+  $("nurEinsatz").parentElement.classList.toggle("hidden", !ek);
+  const l = geraete.filter(g => (!filtern || g.kunde === ek) &&
+                   (g.nr+" "+g.bezeichnung+" "+(g.standort||"")+" "+(g.kunde||"")).toLowerCase().includes(q))
                    .sort((a,b) => rang[a.status]-rang[b.status]);
   $("liste").innerHTML = l.length ? l.map(g => `
     <div class="geraet" onclick="oeffne('${esc(g.nr).replace(/'/g,"\\'")}')">
-      <div><strong>${esc(g.bezeichnung)}</strong><div class="klein">${[esc(g.nr), esc(g.standort||""), "nächste: "+fmt(g.naechste_pruefung)].filter(Boolean).join(" · ")}</div></div>
+      <div><strong>${esc(g.bezeichnung)}</strong><div class="klein">${[esc(g.nr), filtern ? "" : esc(g.kunde||""), esc(g.standort||""), "nächste: "+fmt(g.naechste_pruefung)].filter(Boolean).join(" · ")}</div></div>
       <span class="badge ${g.status}">${STATUS[g.status]}</span>
     </div>`).join("") : '<p class="klein">Noch keine Geräte – QR-Code scannen oder „Neues Gerät".</p>';
 }
@@ -306,11 +351,20 @@ async function oeffne(nr) {
   $("dNr").textContent = nr;
   $("dStatus").innerHTML = aktuell.neu ? "" : `<span class="badge ${aktuell.status}">${STATUS[aktuell.status]}</span>`;
   GF.forEach(f => $("g_"+f).value = aktuell[f] ?? (f==="schutzklasse" ? "I" : f==="intervall_monate" ? 12 : ""));
+  if (aktuell.neu) {                                   // neues Gerät: aktuellen Einsatz übernehmen
+    const e = Speicher.Register.einsatz();
+    $("g_kunde").value = e.kunde || ""; $("g_standort").value = e.standort || "";
+  }
+  $("dl_kunden").innerHTML = Speicher.Register.kunden().map(k => `<option value="${esc(k)}">`).join("");
+  fuelleStandortVorschlaege();
   $("pruefKarte").classList.toggle("hidden", !!aktuell.neu);
   ["rpe","riso","ipe","ib","bemerkung"].forEach(f => $("p_"+f).value = "");
   $("p_sicht").checked = $("p_funktion").checked = $("p_manuell").checked = false;
+  $("p_nachtrag").checked = false; $("p_erg_ok").checked = true; fotoDaten = null;
+  $("p_foto").value = ""; $("p_fotoVorschau").classList.add("hidden"); nachtragModus();
+  $("p_datum").max = new Date().toISOString().slice(0,10);
   $("p_datum").value = new Date().toISOString().slice(0,10);
-  $("p_pruefer").value = localStorageGet("pruefer");
+  $("p_pruefer").value = Speicher.Register.pruefer() || localStorageGet("pruefer");
   $("etikettKarte").classList.toggle("hidden", !!aktuell.neu);
   $("e_groesse").value = localStorageGet("etikett") || "p22:30";
   if (!$("e_groesse").value) $("e_groesse").value = "p22:30";
@@ -326,9 +380,13 @@ async function neuesGeraet() {
 function menue() {
   const m = $("menue"); m.classList.toggle("hidden");
   $("druckmodus").value = localStorageGet("druckmodus") || "auto";
+  $("e_pruefer").value = Speicher.Register.pruefer();
+  const ek = Speicher.Register.einsatz().kunde;
+  $("csvKundeBtn").classList.toggle("hidden", !ek);
+  if (ek) $("csvKundeBtn").textContent = "📊 CSV nur für " + ek;
   $("p22gap").value = localStorageGet("p22gap") || "0";
   $("p22dichte").value = localStorageGet("p22dichte") || "15";
-  Speicher.art().then(a => $("versionInfo").textContent = "Version 7 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a); $("praefix").value = Speicher.einst("praefix");
+  Speicher.art().then(a => $("versionInfo").textContent = "Version 9 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a); $("praefix").value = Speicher.einst("praefix");
   if (!m.classList.contains("hidden")) window.scrollTo(0,0);
 }
 async function teilen(file) {
@@ -336,7 +394,7 @@ async function teilen(file) {
   if (navigator.canShare?.({ files:[file] })) { try { await navigator.share({ files:[file], title:file.name }); } catch {} }
   else { const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click(); }
 }
-async function exportCSV() { teilen(await Speicher.csv()); }
+async function exportCSV(kunde) { teilen(await Speicher.csv(kunde)); }
 async function sicherungTeilen() { teilen(await Speicher.sicherung()); }
 $("wiederFile").addEventListener("change", async e => {
   const f = e.target.files[0]; if (!f) return;
@@ -345,13 +403,95 @@ $("wiederFile").addEventListener("change", async e => {
   e.target.value = "";
 });
 function zeigeStart() {
-  $("detail").classList.add("hidden"); $("start").classList.remove("hidden"); $("zurueck").classList.add("hidden");
-  $("titel").textContent = "VDE-Prüfung"; ladeListe();
+  $("detail").classList.add("hidden"); $("kunden").classList.add("hidden");
+  $("start").classList.remove("hidden"); $("zurueck").classList.add("hidden");
+  $("titel").textContent = "VDE-Prüfung"; zeigeEinsatz(); ladeListe();
+}
+
+// ---------- Aktueller Einsatz ----------
+const opt = (v, t, sel) => `<option value="${esc(v)}"${v === sel ? " selected" : ""}>${esc(t)}</option>`;
+function zeigeEinsatz() {
+  const R = Speicher.Register, e = R.einsatz();
+  $("ein_kunde").innerHTML = opt("", "– kein Kunde –", e.kunde) +
+    R.kunden().map(k => opt(k, k, e.kunde)).join("") + opt("__neu", "＋ neuer Kunde …", "");
+  $("ein_standort").innerHTML = opt("", "– kein Standort –", e.standort) +
+    R.standorte(e.kunde).map(o => opt(o, o, e.standort)).join("") + (e.kunde ? opt("__neu", "＋ neuer Standort …", "") : "");
+  $("ein_standort").disabled = !e.kunde;
+}
+function einsatzKundeGeaendert() {
+  let k = $("ein_kunde").value;
+  if (k === "__neu") {
+    k = (prompt("Name des neuen Kunden:") || "").trim();
+    if (!k) return zeigeEinsatz();
+    Speicher.Register.kundeHinzu(k);
+  }
+  Speicher.Register.setzeEinsatz(k, "");
+  zeigeEinsatz(); zeigeListe();
+}
+function einsatzSpeichern() {
+  const k = Speicher.Register.einsatz().kunde;
+  let o = $("ein_standort").value;
+  if (o === "__neu") {
+    o = (prompt("Neuer Standort für " + k + ":") || "").trim();
+    if (!o) return zeigeEinsatz();
+    Speicher.Register.standortHinzu(k, o);
+  }
+  Speicher.Register.setzeEinsatz(k, o);
+  zeigeEinsatz();
+}
+function fuelleStandortVorschlaege() {
+  $("dl_standorte").innerHTML = Speicher.Register.standorte($("g_kunde").value.trim())
+    .map(o => `<option value="${esc(o)}">`).join("");
+}
+
+// ---------- Kunden & Standorte verwalten ----------
+function zeigeKunden() {
+  $("menue").classList.add("hidden"); $("start").classList.add("hidden"); $("detail").classList.add("hidden");
+  $("kunden").classList.remove("hidden"); $("zurueck").classList.remove("hidden");
+  $("titel").textContent = "Kunden & Standorte";
+  const R = Speicher.Register, liste = R.kunden();
+  const anzahl = k => geraete.filter(g => g.kunde === k).length;
+  $("kundenListe").innerHTML = liste.length ? liste.map((k, i) => `
+    <div class="karte">
+      <div class="zeile" style="align-items:center">
+        <div><strong>${esc(k)}</strong> <span class="klein">· ${anzahl(k)} ${anzahl(k) === 1 ? "Gerät" : "Geräte"}</span></div>
+        <button class="btn hell" style="flex:0" onclick="einsatzWaehlen(${i})">📍</button>
+        <button class="btn rot" style="flex:0" onclick="kundeEntfernen(${i})">🗑</button>
+      </div>
+      ${R.standorte(k).map((o, j) => `
+        <div class="geraet"><span>${esc(o)}</span>
+          <a href="#" class="klein" onclick="standortEntfernen(${i},${j});return false">entfernen</a></div>`).join("")}
+      <div class="zeile" style="margin-top:6px">
+        <input id="neuOrt${i}" placeholder="Standort hinzufügen (z. B. Halle 2)">
+        <button class="btn" style="flex:0" onclick="standortAnlegen(${i})">＋</button>
+      </div>
+    </div>`).join("") : '<p class="klein" style="padding:0 4px">Noch keine Kunden angelegt.</p>';
+}
+const kundeNr = i => Speicher.Register.kunden()[i];
+function kundeAnlegen() {
+  const k = $("k_neu").value.trim(); if (!k) return toast("Name fehlt");
+  Speicher.Register.kundeHinzu(k); $("k_neu").value = ""; zeigeKunden(); toast("Kunde angelegt");
+}
+function standortAnlegen(i) {
+  const o = $("neuOrt" + i).value.trim(); if (!o) return;
+  Speicher.Register.standortHinzu(kundeNr(i), o); zeigeKunden();
+}
+function standortEntfernen(i, j) {
+  const k = kundeNr(i), o = Speicher.Register.standorte(k)[j];
+  if (confirm(`Standort „${o}" aus dem Register entfernen?\n(Geräte behalten ihren Eintrag.)`)) { Speicher.Register.standortLoeschen(k, o); zeigeKunden(); }
+}
+function kundeEntfernen(i) {
+  const k = kundeNr(i);
+  if (confirm(`Kunde „${k}" aus dem Register entfernen?\n(Geräte und Prüfungen bleiben erhalten.)`)) { Speicher.Register.kundeLoeschen(k); zeigeKunden(); }
+}
+function einsatzWaehlen(i) {
+  Speicher.Register.setzeEinsatz(kundeNr(i), ""); toast("Aktueller Kunde: " + kundeNr(i)); zeigeStart();
 }
 async function geraetSpeichern() {
   const body = {}; GF.forEach(f => body[f] = $("g_"+f).value.trim());
   if (!body.bezeichnung) return toast("Bezeichnung fehlt");
   body.intervall_monate = parseInt(body.intervall_monate) || 12;
+  Speicher.Register.merke(body.kunde, body.standort);
   try { await api("/api/geraete/" + encodeURIComponent(aktuell.nr), { method:"PUT", body:JSON.stringify(body) });
         toast("Gespeichert"); oeffne(aktuell.nr); } catch(e) { toast("Fehler: "+e.message); }
 }
@@ -362,9 +502,11 @@ async function geraetLoeschen() {
 function zeigeHistorie() {
   const p = aktuell.pruefungen || [];
   $("historie").innerHTML = p.length ? p.map(x => `
-    <div class="hist ${x.bestanden ? "" : "nicht"}"><strong>${fmt(x.datum)}</strong> – ${x.bestanden ? "bestanden" : "NICHT bestanden"} ${x.pruefer ? "· "+esc(x.pruefer) : ""}<br>
-    RPE ${x.rpe ?? "–"} Ω · RISO ${x.riso ?? "–"} MΩ · IPE ${x.ipe ?? "–"} mA · IB ${x.ib ?? "–"} mA
-    ${x.bemerkung ? "<br><em>"+esc(x.bemerkung)+"</em>" : ""}</div>`).join("") : "Noch keine Prüfung.";
+    <div class="hist ${x.bestanden ? "" : "nicht"}"><strong>${fmt(x.datum)}</strong> – ${x.bestanden ? "bestanden" : "NICHT bestanden"} ${x.pruefer ? "· "+esc(x.pruefer) : ""}
+    ${x.nachgetragen ? ' <span class="badge neu">📜 nachgetragen</span>' : ""}<br>
+    ${[x.rpe, x.riso, x.ipe, x.ib].some(v => v != null) ? `RPE ${x.rpe ?? "–"} Ω · RISO ${x.riso ?? "–"} MΩ · IPE ${x.ipe ?? "–"} mA · IB ${x.ib ?? "–"} mA` : '<span class="klein">keine Messwerte</span>'}
+    ${x.bemerkung ? "<br><em>"+esc(x.bemerkung)+"</em>" : ""}
+    <div style="margin-top:4px">${x.foto ? `<a href="#" onclick="fotoZeigen('${x.uid}');return false">📷 Protokoll-Foto</a> · ` : ""}<a href="#" class="klein" style="color:#c0392b" onclick="pruefungLoeschen('${x.uid}');return false">löschen</a></div></div>`).join("") : "Noch keine Prüfung.";
 }
 
 // ---------- Bewertung (Standard-Grenzwerte VDE 0701-0702) ----------
@@ -393,18 +535,59 @@ function bewerten() {
   else { e.className="ergebnis neu"; e.textContent = messung.length ? "Sicht-/Funktionsprüfung fehlt" : "Werte eingeben"; }
   return bestanden;
 }
+let fotoDaten = null;
+function nachtragModus() {
+  const an = $("p_nachtrag").checked;
+  $("nachtragBox").classList.toggle("hidden", !an);
+  $("neuBewertung").classList.toggle("hidden", an);
+  $("pruefTitel").textContent = an ? "Altes Protokoll nachtragen" : "Neue Prüfung (VDE 0701-0702)";
+  if (an) toast("Datum des alten Protokolls eintragen");
+}
+function fotoGewaehlt(inp) {
+  const f = inp.files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => {                                 // verkleinern, damit der Speicher reicht
+    const s = Math.min(1, 1400 / Math.max(img.width, img.height));
+    const c = document.createElement("canvas"); c.width = img.width*s; c.height = img.height*s;
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    fotoDaten = c.toDataURL("image/jpeg", 0.6);
+    $("p_fotoVorschau").src = fotoDaten; $("p_fotoVorschau").classList.remove("hidden");
+    URL.revokeObjectURL(img.src);
+  };
+  img.src = URL.createObjectURL(f);
+}
+function fotoZeigen(uid) {
+  const p = (aktuell.pruefungen || []).find(x => x.uid === uid); if (!p?.foto) return;
+  const o = document.createElement("div");
+  o.style.cssText = "position:fixed;inset:0;background:#000d;z-index:50;display:flex;align-items:center;justify-content:center;padding:10px";
+  o.innerHTML = `<img src="${p.foto}" style="max-width:100%;max-height:100%">`;
+  o.onclick = () => o.remove(); document.body.appendChild(o);
+}
+async function pruefungLoeschen(uid) {
+  const p = (aktuell.pruefungen || []).find(x => x.uid === uid);
+  if (!p || !confirm(`Prüfung vom ${fmt(p.datum)} wirklich löschen?`)) return;
+  await api(`/api/geraete/${encodeURIComponent(aktuell.nr)}/pruefungen/${encodeURIComponent(uid)}`, { method:"DELETE" });
+  toast("Prüfung gelöscht"); oeffne(aktuell.nr);
+}
 async function pruefungSpeichern() {
-  const bestanden = bewerten() || $("p_manuell").checked;
+  const nachtrag = $("p_nachtrag").checked;
+  if (nachtrag && !$("p_datum").value) return toast("Datum des Protokolls fehlt");
+  const bestanden = nachtrag ? $("p_erg_ok").checked : (bewerten() || $("p_manuell").checked);
   const body = {
+    nachgetragen: nachtrag, foto: nachtrag ? fotoDaten : null,
     datum:$("p_datum").value, pruefer:$("p_pruefer").value.trim(),
-    sichtpruefung:$("p_sicht").checked, funktion:$("p_funktion").checked,
+    sichtpruefung: nachtrag && !$("p_sicht").checked ? null : $("p_sicht").checked,
+    funktion: nachtrag && !$("p_funktion").checked ? null : $("p_funktion").checked,
     rpe:$("p_rpe").value, riso:$("p_riso").value, ipe:$("p_ipe").value, ib:$("p_ib").value,
     bemerkung:$("p_bemerkung").value.trim(), bestanden
   };
-  if (!bestanden && !confirm("Prüfung als NICHT BESTANDEN speichern? Das Gerät wird gesperrt.")) return;
+  if (!bestanden && !confirm(nachtrag ? "Altes Protokoll als NICHT BESTANDEN nachtragen?"
+                                      : "Prüfung als NICHT BESTANDEN speichern? Das Gerät wird gesperrt.")) return;
   localStorageSet("pruefer", body.pruefer);
+  if (!Speicher.Register.pruefer() && body.pruefer) Speicher.Register.setzePruefer(body.pruefer);
   try { await api(`/api/geraete/${encodeURIComponent(aktuell.nr)}/pruefungen`, { method:"POST", body:JSON.stringify(body) });
-        toast("Prüfung gespeichert"); oeffne(aktuell.nr); } catch(e) { toast("Fehler: "+e.message); }
+        toast(nachtrag ? "Protokoll nachgetragen" : "Prüfung gespeichert"); oeffne(aktuell.nr); }
+  catch(e) { toast("Fehler: "+e.message + (fotoDaten ? " (evtl. Foto zu groß)" : "")); }
 }
 // ---------- Etikett ----------
 function etikettZeichnen() {
@@ -527,10 +710,13 @@ function localStorageSet(k,v) { try { localStorage.setItem(k,v); } catch {} }
 if (!Nativ.ist && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
 Nativ.zurueckTaste(() => {
   if (stream) scanStoppen();
-  else if (!$("detail").classList.contains("hidden")) zeigeStart();
+  else if (!$("detail").classList.contains("hidden") || !$("kunden").classList.contains("hidden")) zeigeStart();
   else if (!$("menue").classList.contains("hidden")) $("menue").classList.add("hidden");
   else Nativ.beenden();
 });
+
+// Register aus vorhandenen Geräten füllen (einmalig nützlich nach dem Update)
+api("/api/geraete").then(r => { r.data.forEach(g => Speicher.Register.merke(g.kunde, g.standort)); zeigeEinsatz(); });
 
 // Direktaufruf per Link: /?nr=XYZ  (praktisch, wenn der QR-Code eine URL enthält)
 const p = new URLSearchParams(location.search).get("nr");

@@ -80,16 +80,25 @@ const Speicher = (() => {
     if (pfad === "geraete") {
       return { status: 200, data: (await alle()).filter(g => !g.geloescht).map(mitStatus) };
     }
-    let mt = pfad.match(/^geraete\/(.+)\/pruefungen$/);
+    // einzelne Prüfung löschen: geraete/<nr>/pruefungen/<uid>
+    let mt = pfad.match(/^geraete\/(.+)\/pruefungen\/([^/]+)$/);
+    if (mt && m === "DELETE") {
+      const g = await hole(decodeURIComponent(mt[1]));
+      if (g) { g.pruefungen = (g.pruefungen || []).filter(p => p.uid !== decodeURIComponent(mt[2])); g.geaendert = jetzt(); await lege(g); }
+      return { status: 200, data: g ? mitStatus(g) : {} };
+    }
+    mt = pfad.match(/^geraete\/(.+)\/pruefungen$/);
     if (mt) {
       const nr = decodeURIComponent(mt[1]), g = await hole(nr);
       if (!g || g.geloescht) throw new Error("Gerät erst anlegen");
       const zahl = v => v === "" || v == null ? null : parseFloat(String(v).replace(",", "."));
       g.pruefungen = g.pruefungen || [];
       g.pruefungen.push({ uid: uid(), datum: body.datum || jetzt().slice(0, 10), pruefer: body.pruefer || "",
-        sichtpruefung: body.sichtpruefung ? 1 : 0, funktion: body.funktion ? 1 : 0,
+        sichtpruefung: body.sichtpruefung == null ? null : body.sichtpruefung ? 1 : 0,
+        funktion: body.funktion == null ? null : body.funktion ? 1 : 0,
         rpe: zahl(body.rpe), riso: zahl(body.riso), ipe: zahl(body.ipe), ib: zahl(body.ib),
-        bestanden: body.bestanden ? 1 : 0, bemerkung: body.bemerkung || "" });
+        bestanden: body.bestanden ? 1 : 0, bemerkung: body.bemerkung || "",
+        nachgetragen: body.nachgetragen ? 1 : 0, foto: body.foto || null });
       g.geaendert = jetzt();
       await lege(g); return { status: 200, data: mitStatus(g) };
     }
@@ -117,31 +126,71 @@ const Speicher = (() => {
     catch { return ""; }
   }
 
+  // ---- Register: Kunden mit Standorten, aktueller Einsatz, Prüfer ----
+  const REG = "vde_register";
+  function reg() {
+    try { const r = JSON.parse(localStorage.getItem(REG) || "{}"); r.kunden ??= {}; return r; }
+    catch { return { kunden: {} }; }
+  }
+  const regSpeichern = r => localStorage.setItem(REG, JSON.stringify(r));
+  const Register = {
+    kunden: () => Object.keys(reg().kunden).sort((a, b) => a.localeCompare(b, "de")),
+    standorte: k => [...((reg().kunden[k] || {}).standorte || [])].sort((a, b) => a.localeCompare(b, "de")),
+    kundeHinzu(k) { k = (k || "").trim(); if (!k) return; const r = reg(); r.kunden[k] ??= { standorte: [] }; regSpeichern(r); },
+    standortHinzu(k, o) {
+      k = (k || "").trim(); o = (o || "").trim(); if (!k || !o) return;
+      const r = reg(); r.kunden[k] ??= { standorte: [] };
+      if (!r.kunden[k].standorte.includes(o)) r.kunden[k].standorte.push(o);
+      regSpeichern(r);
+    },
+    kundeLoeschen(k) { const r = reg(); delete r.kunden[k]; regSpeichern(r); if (Register.einsatz().kunde === k) Register.setzeEinsatz("", ""); },
+    standortLoeschen(k, o) { const r = reg(); if (r.kunden[k]) r.kunden[k].standorte = r.kunden[k].standorte.filter(x => x !== o); regSpeichern(r); },
+    merke(k, o) { if (k) { Register.kundeHinzu(k); if (o) Register.standortHinzu(k, o); } },
+    einsatz: () => reg().einsatz || { kunde: "", standort: "" },
+    setzeEinsatz(k, o) { const r = reg(); r.einsatz = { kunde: k || "", standort: o || "" }; regSpeichern(r); },
+    pruefer: () => reg().pruefer || einst("pruefer_alt") || "",
+    setzePruefer(n) { const r = reg(); r.pruefer = (n || "").trim(); regSpeichern(r); },
+    alles: () => reg(),
+    einspielen(neu) {                                   // zusammenführen, nichts überschreiben
+      if (!neu || !neu.kunden) return;
+      const r = reg();
+      for (const [k, v] of Object.entries(neu.kunden)) {
+        r.kunden[k] ??= { standorte: [] };
+        for (const o of v.standorte || []) if (!r.kunden[k].standorte.includes(o)) r.kunden[k].standorte.push(o);
+      }
+      if (!r.pruefer && neu.pruefer) r.pruefer = neu.pruefer;
+      regSpeichern(r);
+    },
+  };
+
   // ---- Export ----
-  async function csv() {
+  async function csv(nurKunde) {
     const ja = v => v == null ? "" : v ? "ja" : "nein";
     const zeilen = [["Nr", "Bezeichnung", "Hersteller", "Typ", "Seriennr", "Standort", "Kunde", "SK", "Datum",
-      "Prüfer", "Sicht", "RPE Ω", "RISO MΩ", "IPE mA", "IB mA", "Funktion", "Bestanden", "Bemerkung"]];
-    for (const g of (await alle()).filter(g => !g.geloescht).sort((a, b) => a.nr.localeCompare(b.nr)))
+      "Prüfer", "Sicht", "RPE Ω", "RISO MΩ", "IPE mA", "IB mA", "Funktion", "Bestanden", "Bemerkung", "Nachgetragen"]];
+    for (const g of (await alle()).filter(g => !g.geloescht && (!nurKunde || g.kunde === nurKunde))
+                                  .sort((a, b) => a.nr.localeCompare(b.nr)))
       for (const p of mitStatus(g).pruefungen.reverse())
         zeilen.push([g.nr, g.bezeichnung, g.hersteller, g.typ, g.seriennr, g.standort, g.kunde, g.schutzklasse,
-          p.datum, p.pruefer, ja(p.sichtpruefung), p.rpe, p.riso, p.ipe, p.ib, ja(p.funktion), ja(p.bestanden), p.bemerkung]);
+          p.datum, p.pruefer, ja(p.sichtpruefung), p.rpe, p.riso, p.ipe, p.ib, ja(p.funktion), ja(p.bestanden), p.bemerkung, p.nachgetragen ? "ja" : ""]);
     const text = "﻿" + zeilen.map(z => z.map(v => {
       const s = String(v ?? "");
       return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     }).join(";")).join("\r\n");
-    return new File([text], "vde_pruefungen_" + jetzt().slice(0, 10) + ".csv", { type: "text/csv" });
+    const teil = nurKunde ? "_" + nurKunde.replace(/[^\wäöüÄÖÜß-]+/g, "_") : "";
+    return new File([text], "vde_pruefungen" + teil + "_" + jetzt().slice(0, 10) + ".csv", { type: "text/csv" });
   }
   async function sicherung() {
-    const daten = JSON.stringify({ version: 1, erstellt: jetzt(), geraete: await alle() }, null, 1);
+    const daten = JSON.stringify({ version: 2, erstellt: jetzt(), geraete: await alle(), register: Register.alles() }, null, 1);
     return new File([daten], "vde_sicherung_" + jetzt().slice(0, 10) + ".json", { type: "application/json" });
   }
   async function wiederherstellen(file) {
-    const { geraete } = JSON.parse(await file.text());
-    for (const g of geraete) await lege(g);
+    const { geraete, register } = JSON.parse(await file.text());
+    for (const g of geraete) { await lege(g); Register.merke(g.kunde, g.standort); }
+    Register.einspielen(register);
     return geraete.length;
   }
 
-  return { api, einst, csv, sicherung, wiederherstellen, art: async () => (await oeffneDB(), ersatz ? "Ersatzspeicher" : "IndexedDB") };
+  return { api, einst, Register, csv, sicherung, wiederherstellen, art: async () => (await oeffneDB(), ersatz ? "Ersatzspeicher" : "IndexedDB") };
 })();
 const api = Speicher.api;
