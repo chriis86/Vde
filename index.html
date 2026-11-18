@@ -177,6 +177,10 @@
         <button class="btn hell" onclick="druckerSuchen()">🔍 Drucker suchen</button>
         <button class="btn hell" style="flex:0" onclick="druckerVergessen()">✕</button>
       </div>
+      <details style="margin-top:10px"><summary class="klein">🔧 Druck-Diagnose</summary>
+        <pre id="diagnose" style="font-size:11px;white-space:pre-wrap;background:#f6f6f6;padding:8px;border-radius:6px;margin:6px 0">noch nichts</pre>
+        <button class="btn hell" onclick="$('diagnose').textContent = Drucker.diagnose()">aktualisieren</button>
+      </details>
       <div id="suchBox" class="hidden" style="margin-top:10px">
         <div class="klein" id="suchStatus">Suche läuft …</div>
         <div id="suchListe"></div>
@@ -302,7 +306,7 @@ async function neuesGeraet() {
 function menue() {
   const m = $("menue"); m.classList.toggle("hidden");
   $("druckmodus").value = localStorageGet("druckmodus") || "auto";
-  Speicher.art().then(a => $("versionInfo").textContent = "Version 5 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a); $("praefix").value = Speicher.einst("praefix");
+  Speicher.art().then(a => $("versionInfo").textContent = "Version 6 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a); $("praefix").value = Speicher.einst("praefix");
   if (!m.classList.contains("hidden")) window.scrollTo(0,0);
 }
 async function teilen(file) {
@@ -482,13 +486,16 @@ async function druckerVerbinden(id, name) {
 async function etikettDrucken() {
   try {
     if (!Drucker.name()) { if (Drucker.kannSuchen()) { druckerSuchen(); return toast("Erst Drucker auswählen"); } await Drucker.verbinden(); druckerAnzeige(); }
+    toast("Verbinde …");
+    await Drucker.sicherVerbunden(); druckerAnzeige();
     const p22Groesse = $("e_groesse").value.startsWith("p22:");
     if (Drucker.modus() === "p22" && !p22Groesse) { $("e_groesse").value = "p22:40"; etikettZeichnen(); }
     if (Drucker.modus() !== "p22" && p22Groesse) { $("e_groesse").value = "40x30"; etikettZeichnen(); }
     toast("Drucke …");
     await Drucker.drucken($("etikettCanvas"));
-    toast("Gedruckt ✓");
-  } catch(e) { toast(e.message); }
+    toast("Gesendet ✓");
+    $("diagnose").textContent = Drucker.diagnose();
+  } catch(e) { toast(e.message); $("diagnose").textContent = "Fehler: " + e.message + "\n" + Drucker.diagnose(); }
 }
 
 function localStorageGet(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } }

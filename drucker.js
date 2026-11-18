@@ -18,7 +18,24 @@ const Drucker = (() => {
 
   let geraet = null, kanal = null, verbundenFlag = false, modus = "escpos", stueck = 128;
   const P22_DIENST = voll(0xff00), P22_KANAL = voll(0xff02);
+  // Diagnose: was wurde gefunden/gesendet, was hat der Drucker geantwortet
+  const diag = { dienste: [], kanal: "", mtu: 0, stueck: 0, gesendet: 0, antworten: [], schritte: [] };
+  const hex = u8 => Array.from(u8, b => b.toString(16).padStart(2, "0")).join(" ");
+  const hexZuBytes = h => new Uint8Array((h.replace(/[^0-9a-f]/gi, "").match(/../g) || []).map(x => parseInt(x, 16)));
+  let wartende = [];                                   // Promises, die auf eine Antwort warten
+  function antwort(bytes) {
+    const txt = Array.from(bytes, b => b >= 32 && b < 127 ? String.fromCharCode(b) : ".").join("");
+    diag.antworten.push(hex(bytes) + "  |" + txt + "|");
+    if (diag.antworten.length > 30) diag.antworten.shift();
+    const w = wartende; wartende = []; w.forEach(f => f(bytes));
+  }
+  const warteAufAntwort = ms => new Promise(ok => {
+    const t = setTimeout(() => { wartende = wartende.filter(f => f !== fn); ok(null); }, ms);
+    const fn = b => { clearTimeout(t); ok(b); };
+    wartende.push(fn);
+  });
   const wunsch = () => { try { return localStorage.getItem("druckmodus") || "auto"; } catch { return "auto"; } };
+  const kurz = u => { u = String(u).toLowerCase(); return /^0000....-0000-1000-8000-00805f9b34fb$/.test(u) ? u.slice(4, 8) : u; };
   const nativ = () => typeof Nativ !== "undefined" && Nativ.ist;
   const BLE = () => Nativ.plugin("BluetoothLe");
 
@@ -45,15 +62,29 @@ const Drucker = (() => {
       let mtu = 23;
       try { mtu = (await BLE().getMtu({ deviceId: geraet.id })).value || 23; } catch {}
       const kandidaten = [];
-      for (const s of services) for (const c of s.characteristics)
+      diag.dienste = []; diag.mtu = mtu;
+      for (const s of services) for (const c of s.characteristics) {
+        const pr = Object.keys(c.properties || {}).filter(k => c.properties[k]).join(",");
+        diag.dienste.push(kurz(s.uuid) + " / " + kurz(c.uuid) + "  [" + pr + "]");
         if (c.properties.writeWithoutResponse || c.properties.write)
           kandidaten.push({ service: s.uuid.toLowerCase(), characteristic: c.uuid.toLowerCase(),
                             ohneAntwort: !!c.properties.writeWithoutResponse });
+        // Antworten des Druckers mitlesen (FF01 o. ä.)
+        if ((c.properties.notify || c.properties.indicate) && !/^0000(2a|18)/.test(c.uuid.toLowerCase())) {
+          try {
+            const key = `notification|${geraet.id}|${s.uuid.toLowerCase()}|${c.uuid.toLowerCase()}`;
+            await BLE().addListener(key, ev => antwort(hexZuBytes(ev?.value || "")));
+            await BLE().startNotifications({ deviceId: geraet.id, service: s.uuid.toLowerCase(), characteristic: c.uuid.toLowerCase() });
+          } catch (e) { diag.schritte.push("Abo " + kurz(c.uuid) + " fehlgeschlagen: " + e.message); }
+        }
+      }
       const p22 = kandidaten.find(k => k.service === P22_DIENST && k.characteristic === P22_KANAL);
       kanal = (wunsch() !== "escpos" && p22) || kandidaten[0];
       if (kanal) {
         modus = wunsch() === "auto" ? (kanal === p22 ? "p22" : "escpos") : wunsch();
         stueck = modus === "p22" ? Math.max(20, Math.min(mtu - 3, 200)) : Math.max(20, Math.min(mtu - 3, 128));
+        diag.kanal = kurz(kanal.service) + " / " + kurz(kanal.characteristic) + (kanal.ohneAntwort ? " (ohne Antwort)" : " (mit Antwort)");
+        diag.stueck = stueck;
         verbundenFlag = true; return;
       }
     } else {
@@ -67,6 +98,12 @@ const Drucker = (() => {
       if (kanal) {
         modus = wunsch() === "auto" ? (kanal === p22 ? "p22" : "escpos") : wunsch();
         stueck = modus === "p22" ? 180 : 128;
+        diag.kanal = kurz(kanal.service.uuid) + " / " + kurz(kanal.uuid); diag.stueck = stueck;
+        try {
+          for (const c of await kanal.service.getCharacteristics())
+            if (c.properties.notify) { c.addEventListener("characteristicvaluechanged",
+              e => antwort(new Uint8Array(e.target.value.buffer))); await c.startNotifications(); }
+        } catch {}
         return;
       }
     }
@@ -150,7 +187,37 @@ const Drucker = (() => {
     return new Uint8Array([...kopf, ...raster, ...ende]);
   }
 
+  // P22: erst Bereitschaft fragen, dann Kopf, ggf. auf Freigabe (f0 00 HI LO) warten, dann Bild
+  async function sendenP22(job) {
+    diag.schritte = []; diag.gesendet = 0;
+    const enc = s => new TextEncoder().encode(s);
+    await senden(enc("\x1b!?\r\n"));
+    const bereit = await warteAufAntwort(800);
+    diag.schritte.push("Bereitschaft: " + (bereit ? hex(bereit) : "keine Antwort"));
+    // Job aufteilen: Kopf bis einschließlich "BITMAP ...,"
+    const txt = new TextDecoder("latin1").decode(job.slice(0, 200));
+    const k = txt.indexOf("BITMAP"), kommaEnde = txt.indexOf(",1,", k) + 3;
+    const kopf = job.slice(0, kommaEnde), rest = job.slice(kommaEnde);
+    await senden(kopf);
+    let frei = await warteAufAntwort(600);
+    let pos = 0;
+    while (pos < rest.length) {
+      let menge = rest.length - pos;
+      if (frei && frei[0] === 0xf0 && frei.length >= 4) {          // Drucker teilt Kontingent zu
+        menge = Math.min(menge, (frei[2] << 8) | frei[3]);
+        diag.schritte.push("Freigabe " + ((frei[2] << 8) | frei[3]) + " Bytes");
+        await new Promise(r => setTimeout(r, 300));
+      }
+      await senden(rest.slice(pos, pos + menge));
+      pos += menge;
+      if (pos < rest.length) frei = await warteAufAntwort(3000);
+    }
+    const fertig = await warteAufAntwort(4000);
+    diag.schritte.push("Nach dem Druck: " + (fertig ? hex(fertig) : "keine Antwort"));
+  }
+
   async function senden(daten) {
+    diag.gesendet += daten.length;
     const STUECK = stueck, pause = () => new Promise(r => setTimeout(r, modus === "p22" ? 15 : 20));
     for (let i = 0; i < daten.length; i += STUECK) {
       const teil = daten.slice(i, i + STUECK);
@@ -172,9 +239,22 @@ const Drucker = (() => {
     verbunden: () => nativ() ? !!(kanal && verbundenFlag) : !!(kanal && geraet?.gatt.connected),
     name: () => geraet?.name || null,
     modus: () => modus,
+    diagnose: () => [
+      "Drucker: " + (geraet?.name || "–") + "   Modus: " + modus,
+      "Kanal: " + diag.kanal + "   MTU: " + diag.mtu + "   Stück: " + diag.stueck,
+      "Gesendet: " + diag.gesendet + " Bytes",
+      ...diag.schritte,
+      "— Antworten des Druckers —", ...(diag.antworten.length ? diag.antworten : ["(keine)"]),
+      "— Dienste / Kanäle —", ...diag.dienste,
+    ].join("\n"),
     befehle,
     befehleP22,
     suchen, stopSuche, verbindenMit, kannSuchen: () => nativ(),
+    async sicherVerbunden() {
+      if (!geraet) return;
+      if (nativ() && !kanal) await BLE().initialize();
+      if (!this.verbunden()) await koppeln();
+    },
     trennen() {
       try { localStorage.removeItem("drucker"); } catch {}
       try { nativ() ? BLE().disconnect({ deviceId: geraet.id }) : geraet?.gatt.disconnect(); } catch {}
@@ -184,7 +264,10 @@ const Drucker = (() => {
       if (!geraet) throw new Error("Erst Drucker suchen und auswählen");
       if (nativ() && !kanal) await BLE().initialize();
       if (!this.verbunden()) await koppeln();
-      await senden(befehle(canvas));
+      const job = befehle(canvas);
+      if (modus === "p22") await sendenP22(job);
+      else { diag.schritte = []; diag.gesendet = 0; await senden(job); const a = await warteAufAntwort(2000);
+             diag.schritte.push("Antwort: " + (a ? hex(a) : "keine")); }
     },
   };
 })();
