@@ -83,6 +83,21 @@
       <option value="p22">Olympia P22 / Nelko P21</option>
       <option value="escpos">ESC/POS (andere Drucker)</option>
     </select>
+    <label>P22: Lücke zwischen den Etiketten</label>
+    <select id="p22gap" onchange="localStorageSet('p22gap', this.value)">
+      <option value="0">keine Lücke (Endlosband)</option>
+      <option value="5">5 mm</option>
+      <option value="3">3 mm</option>
+      <option value="2">2 mm</option>
+      <option value="1.5">1,5 mm</option>
+    </select>
+    <label>P22: Druckdichte (Schwärze)</label>
+    <select id="p22dichte" onchange="localStorageSet('p22dichte', this.value)">
+      <option value="15">15 (sehr dunkel)</option>
+      <option value="12">12</option>
+      <option value="10">10</option>
+      <option value="8">8 (hell)</option>
+    </select>
     <label>Präfix für neue Nummern</label>
     <input id="praefix" placeholder="VDE-" onchange="Speicher.einst('praefix', this.value)">
     <p class="klein" id="versionInfo"></p>
@@ -148,11 +163,16 @@
       <div class="zeile">
         <div><label>Etikettengröße</label>
           <select id="e_groesse" onchange="etikettZeichnen()">
-            <optgroup label="Olympia P22 (14 mm Etiketten)">
-              <option value="p22:40">P22 · 14 × 40 mm</option>
-              <option value="p22:30">P22 · 14 × 30 mm</option>
-              <option value="p22:50">P22 · 14 × 50 mm</option>
-              <option value="p22:75">P22 · 14 × 75 mm</option>
+            <optgroup label="Olympia P22 (Etikettenlänge)">
+              <option value="p22:12">P22 · 12 mm lang</option>
+              <option value="p22:15">P22 · 15 mm lang</option>
+              <option value="p22:20">P22 · 20 mm lang</option>
+              <option value="p22:22">P22 · 22 mm lang</option>
+              <option value="p22:25">P22 · 25 mm lang</option>
+              <option value="p22:30">P22 · 30 mm lang</option>
+              <option value="p22:40">P22 · 40 mm lang</option>
+              <option value="p22:50">P22 · 50 mm lang</option>
+              <option value="p22:75">P22 · 75 mm lang</option>
             </optgroup>
             <optgroup label="Andere Drucker">
               <option value="40x30">40 × 30 mm</option>
@@ -292,8 +312,8 @@ async function oeffne(nr) {
   $("p_datum").value = new Date().toISOString().slice(0,10);
   $("p_pruefer").value = localStorageGet("pruefer");
   $("etikettKarte").classList.toggle("hidden", !!aktuell.neu);
-  $("e_groesse").value = localStorageGet("etikett") || "p22:40";
-  if (!$("e_groesse").value) $("e_groesse").value = "p22:40";
+  $("e_groesse").value = localStorageGet("etikett") || "p22:30";
+  if (!$("e_groesse").value) $("e_groesse").value = "p22:30";
   zeigeHistorie(); bewerten(); etikettZeichnen(); druckerAnzeige(); window.scrollTo(0,0);
   if (aktuell.neu) { toast("Unbekannter Code – Gerät anlegen"); $("g_bezeichnung").focus(); }
 }
@@ -306,7 +326,9 @@ async function neuesGeraet() {
 function menue() {
   const m = $("menue"); m.classList.toggle("hidden");
   $("druckmodus").value = localStorageGet("druckmodus") || "auto";
-  Speicher.art().then(a => $("versionInfo").textContent = "Version 6 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a); $("praefix").value = Speicher.einst("praefix");
+  $("p22gap").value = localStorageGet("p22gap") || "0";
+  $("p22dichte").value = localStorageGet("p22dichte") || "15";
+  Speicher.art().then(a => $("versionInfo").textContent = "Version 7 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a); $("praefix").value = Speicher.einst("praefix");
   if (!m.classList.contains("hidden")) window.scrollTo(0,0);
 }
 async function teilen(file) {

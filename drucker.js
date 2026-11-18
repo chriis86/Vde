@@ -35,6 +35,7 @@ const Drucker = (() => {
     wartende.push(fn);
   });
   const wunsch = () => { try { return localStorage.getItem("druckmodus") || "auto"; } catch { return "auto"; } };
+  const einst = (k, std) => { try { return localStorage.getItem(k) || std; } catch { return std; } };
   const kurz = u => { u = String(u).toLowerCase(); return /^0000....-0000-1000-8000-00805f9b34fb$/.test(u) ? u.slice(4, 8) : u; };
   const nativ = () => typeof Nativ !== "undefined" && Nativ.ist;
   const BLE = () => Nativ.plugin("BluetoothLe");
@@ -127,7 +128,8 @@ const Drucker = (() => {
     const enc = s => new TextEncoder().encode(s);
     const kopf = enc("\x1b!o\r\n" +
       `SIZE 14.0 mm,${Number(laenge).toFixed(1)} mm\r\n` +
-      "GAP 5.0 mm,0 mm\r\nDIRECTION 1,1\r\nDENSITY 15\r\nCLS\r\n" +
+      `GAP ${Number(einst("p22gap", "0")).toFixed(1)} mm,0 mm\r\n` +
+      `DIRECTION 1,1\r\nDENSITY ${einst("p22dichte", "15")}\r\nCLS\r\n` +
       `BITMAP 0,0,${bpr},${rows},1,`);
     const ende = enc("\r\nPRINT 1\r\n");
     const job = new Uint8Array(kopf.length + bild.length + ende.length);
@@ -242,7 +244,7 @@ const Drucker = (() => {
     diagnose: () => [
       "Drucker: " + (geraet?.name || "–") + "   Modus: " + modus,
       "Kanal: " + diag.kanal + "   MTU: " + diag.mtu + "   Stück: " + diag.stueck,
-      "Gesendet: " + diag.gesendet + " Bytes",
+      "Gesendet: " + diag.gesendet + " Bytes   Lücke: " + einst("p22gap", "0") + " mm   Dichte: " + einst("p22dichte", "15"),
       ...diag.schritte,
       "— Antworten des Druckers —", ...(diag.antworten.length ? diag.antworten : ["(keine)"]),
       "— Dienste / Kanäle —", ...diag.dienste,
