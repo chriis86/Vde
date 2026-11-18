@@ -1,26 +1,45 @@
 // Lokaler Speicher (IndexedDB) – die App läuft komplett offline auf dem Handy.
 // `api()` stellt alle Datenfunktionen bereit – kein Server nötig.
 const Speicher = (() => {
-  let dbp = null;
+  // Hauptspeicher IndexedDB; klappt das nicht (z. B. in manchen WebViews), Ersatz: localStorage
+  let dbp = null, ersatz = false;
   const oeffneDB = () => dbp ??= new Promise((ok, fehler) => {
+    if (!window.indexedDB) return fehler(new Error("kein IndexedDB"));
+    const timer = setTimeout(() => fehler(new Error("IndexedDB antwortet nicht")), 3000);
     const r = indexedDB.open("vde-pruefung", 1);
     r.onupgradeneeded = () => r.result.createObjectStore("geraete", { keyPath: "nr" });
-    r.onsuccess = () => ok(r.result);
-    r.onerror = () => fehler(r.error);
-  });
-  const tx = async (modus, fn) => {
-    const db = await oeffneDB();
-    return new Promise((ok, fehler) => {
-      const t = db.transaction("geraete", modus), s = t.objectStore("geraete");
-      let erg; Promise.resolve(fn(s)).then(v => erg = v);
-      t.oncomplete = () => ok(erg); t.onerror = () => fehler(t.error);
-    });
-  };
+    r.onsuccess = () => { clearTimeout(timer); ok(r.result); };
+    r.onerror = () => { clearTimeout(timer); fehler(r.error); };
+    r.onblocked = () => { clearTimeout(timer); fehler(new Error("IndexedDB blockiert")); };
+  }).catch(e => { console.warn("Ersatzspeicher:", e); ersatz = true; return null; });
+
+  const LS = "vde_geraete";
+  const lsLesen = () => { try { return JSON.parse(localStorage.getItem(LS) || "{}"); } catch { return {}; } };
+  const lsSchreiben = o => localStorage.setItem(LS, JSON.stringify(o));
+
   const req = r => new Promise((ok, f) => { r.onsuccess = () => ok(r.result); r.onerror = () => f(r.error); });
-  const alle = () => tx("readonly", s => req(s.getAll()));
-  const hole = nr => tx("readonly", s => req(s.get(nr)));
-  const lege = g => tx("readwrite", s => req(s.put(g)));
-  const weg = nr => tx("readwrite", s => req(s.delete(nr)));
+  async function store(modus) {
+    const db = await oeffneDB();
+    return db ? db.transaction("geraete", modus).objectStore("geraete") : null;
+  }
+  async function alle() {
+    const s = await store("readonly");
+    return s ? req(s.getAll()) : Object.values(lsLesen());
+  }
+  async function hole(nr) {
+    const s = await store("readonly");
+    return s ? req(s.get(nr)) : lsLesen()[nr];
+  }
+  async function lege(g) {
+    const s = await store("readwrite");
+    if (s) return req(s.put(g));
+    const o = lsLesen(); o[g.nr] = g; lsSchreiben(o);
+  }
+  async function weg(nr) {
+    const s = await store("readwrite");
+    if (s) return req(s.delete(nr));
+    const o = lsLesen(); delete o[nr]; lsSchreiben(o);
+  }
 
   // Wenn der Browser es erlaubt: Daten vor automatischem Löschen schützen
   navigator.storage?.persist?.();
@@ -123,6 +142,6 @@ const Speicher = (() => {
     return geraete.length;
   }
 
-  return { api, einst, csv, sicherung, wiederherstellen };
+  return { api, einst, csv, sicherung, wiederherstellen, art: async () => (await oeffneDB(), ersatz ? "Ersatzspeicher" : "IndexedDB") };
 })();
 const api = Speicher.api;

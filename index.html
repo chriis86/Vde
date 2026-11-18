@@ -5,6 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1f3a5f">
 <title>VDE-Prüfung</title>
+<script>
+  // Fehler sichtbar machen (hilft bei der Fehlersuche in der App)
+  function zeigeFehler(t) {
+    let e = document.getElementById("fehlerBox");
+    if (!e) { e = document.createElement("div"); e.id = "fehlerBox";
+      e.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;background:#c0392b;color:#fff;padding:10px;border-radius:8px;font:13px monospace;z-index:99;white-space:pre-wrap";
+      e.onclick = () => e.remove(); document.addEventListener("DOMContentLoaded", () => document.body.appendChild(e));
+      if (document.body) document.body.appendChild(e); }
+    e.textContent = "Fehler: " + t + "\n(antippen zum Schließen)";
+  }
+  window.addEventListener("error", e => zeigeFehler(e.message + " @ " + (e.filename || "").split("/").pop() + ":" + e.lineno));
+  window.addEventListener("unhandledrejection", e => zeigeFehler(e.reason && e.reason.message || e.reason));
+</script>
+<script src="capacitor.js" onerror="this.remove()"></script>
+<script src="nativ.js"></script>
 <script src="jsQR.js"></script>
 <script src="qrcode.js"></script>
 <script src="drucker.js"></script>
@@ -62,8 +77,15 @@
       <button class="btn hell" onclick="$('wiederFile').click()">♻ Sicherung einspielen</button>
       <input type="file" id="wiederFile" accept=".json,application/json" class="hidden">
     </div>
+    <label>Drucksprache</label>
+    <select id="druckmodus" onchange="localStorageSet('druckmodus', this.value); Drucker.trennen(); druckerAnzeige(); toast('Drucker neu hinzufügen')">
+      <option value="auto">Automatisch erkennen</option>
+      <option value="p22">Olympia P22 / Nelko P21</option>
+      <option value="escpos">ESC/POS (andere Drucker)</option>
+    </select>
     <label>Präfix für neue Nummern</label>
     <input id="praefix" placeholder="VDE-" onchange="Speicher.einst('praefix', this.value)">
+    <p class="klein" id="versionInfo"></p>
     <p class="klein">Alle Daten liegen nur auf diesem Handy. Erstelle regelmäßig eine Sicherung
       (z. B. nach Google Drive oder per Mail), damit beim Handy-Verlust nichts weg ist.</p>
   </section>
@@ -126,11 +148,18 @@
       <div class="zeile">
         <div><label>Etikettengröße</label>
           <select id="e_groesse" onchange="etikettZeichnen()">
-            <option value="40x30">40 × 30 mm</option>
-            <option value="50x30">50 × 30 mm</option>
-            <option value="40x20">40 × 20 mm</option>
-            <option value="30x15">30 × 15 mm</option>
-            <option value="15x30">15 mm Band (P22)</option>
+            <optgroup label="Olympia P22 (14 mm Etiketten)">
+              <option value="p22:40">P22 · 14 × 40 mm</option>
+              <option value="p22:30">P22 · 14 × 30 mm</option>
+              <option value="p22:50">P22 · 14 × 50 mm</option>
+              <option value="p22:75">P22 · 14 × 75 mm</option>
+            </optgroup>
+            <optgroup label="Andere Drucker">
+              <option value="40x30">40 × 30 mm</option>
+              <option value="50x30">50 × 30 mm</option>
+              <option value="40x20">40 × 20 mm</option>
+              <option value="30x15">30 × 15 mm</option>
+            </optgroup>
           </select></div>
         <div><label>Text</label>
           <select id="e_text" onchange="etikettZeichnen()">
@@ -143,9 +172,15 @@
         <button class="btn" onclick="etikettDrucken()">🖨 Drucken</button>
         <button class="btn hell" onclick="etikettTeilen()">📤 Teilen / Speichern</button>
       </div>
-      <div class="klein" style="margin-top:8px">Drucker: <span id="druckerName">nicht verbunden</span>
-        · <a href="#" onclick="druckerWaehlen();return false">Drucker per Bluetooth hinzufügen</a>
-        · <a href="#" onclick="druckerVergessen();return false">trennen</a></div>
+      <div class="klein" style="margin-top:10px">Drucker: <strong id="druckerName">nicht verbunden</strong></div>
+      <div class="zeile" style="margin-top:8px">
+        <button class="btn hell" onclick="druckerSuchen()">🔍 Drucker suchen</button>
+        <button class="btn hell" style="flex:0" onclick="druckerVergessen()">✕</button>
+      </div>
+      <div id="suchBox" class="hidden" style="margin-top:10px">
+        <div class="klein" id="suchStatus">Suche läuft …</div>
+        <div id="suchListe"></div>
+      </div>
     </div>
 
     <div class="karte" id="pruefKarte">
@@ -253,19 +288,25 @@ async function oeffne(nr) {
   $("p_datum").value = new Date().toISOString().slice(0,10);
   $("p_pruefer").value = localStorageGet("pruefer");
   $("etikettKarte").classList.toggle("hidden", !!aktuell.neu);
-  $("e_groesse").value = localStorageGet("etikett") || "40x30";
+  $("e_groesse").value = localStorageGet("etikett") || "p22:40";
+  if (!$("e_groesse").value) $("e_groesse").value = "p22:40";
   zeigeHistorie(); bewerten(); etikettZeichnen(); druckerAnzeige(); window.scrollTo(0,0);
   if (aktuell.neu) { toast("Unbekannter Code – Gerät anlegen"); $("g_bezeichnung").focus(); }
 }
 async function neuesGeraet() {
-  const { data } = await api("/api/naechste-nr");
-  await oeffne(data.nr);
+  try {
+    const { data } = await api("/api/naechste-nr");
+    await oeffne(data.nr);
+  } catch (e) { zeigeFehler("Neues Gerät: " + e.message); }
 }
 function menue() {
-  const m = $("menue"); m.classList.toggle("hidden"); $("praefix").value = Speicher.einst("praefix");
+  const m = $("menue"); m.classList.toggle("hidden");
+  $("druckmodus").value = localStorageGet("druckmodus") || "auto";
+  Speicher.art().then(a => $("versionInfo").textContent = "Version 5 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a); $("praefix").value = Speicher.einst("praefix");
   if (!m.classList.contains("hidden")) window.scrollTo(0,0);
 }
 async function teilen(file) {
+  if (Nativ.ist) return Nativ.teilen(file).catch(e => toast("Teilen fehlgeschlagen: " + e.message));
   if (navigator.canShare?.({ files:[file] })) { try { await navigator.share({ files:[file], title:file.name }); } catch {} }
   else { const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click(); }
 }
@@ -343,21 +384,28 @@ async function pruefungSpeichern() {
 function etikettZeichnen() {
   if (!aktuell || aktuell.neu) return;
   localStorageSet("etikett", $("e_groesse").value);
-  const [bmm, hmm] = $("e_groesse").value.split("x").map(Number);
-  const DOT = 8;                                   // 203 dpi = 8 Punkte pro mm
-  const W = Math.ceil(bmm*DOT/8)*8, H = hmm*DOT;   // Breite auf volle Bytes runden
+  const wahl = $("e_groesse").value, DOT = 8;      // 203 dpi = 8 Punkte pro mm
   const c = $("etikettCanvas"), ctx = c.getContext("2d");
+  let W, H;
+  if (wahl.startsWith("p22:")) {                   // P22: Kopf 96 Punkte, Länge 7,1 Punkte/mm
+    const laenge = +wahl.slice(4);
+    W = Math.floor(laenge * 7.1 + 0.5); H = 96; c.dataset.laenge = laenge;
+  } else {
+    const [bmm, hmm] = wahl.split("x").map(Number);
+    W = Math.ceil(bmm*DOT/8)*8; H = hmm*DOT; delete c.dataset.laenge;   // Breite auf volle Bytes
+  }
   c.width = W; c.height = H;
   ctx.fillStyle = "#fff"; ctx.fillRect(0,0,W,H); ctx.fillStyle = "#000";
 
   const qr = qrcode(0, "M"); qr.addData(aktuell.nr); qr.make();
-  const n = qr.getModuleCount() + 4;               // +4 = Ruhezone (2 Module je Seite)
+  const ruhe = H <= 96 ? 1 : 2;                    // Ruhezone in Modulen je Seite (P22: knapp)
+  const n = qr.getModuleCount() + 2*ruhe;
   const hoch = W < H;                              // schmales Band: QR oben, Text darunter
   const platz = hoch ? W : Math.min(H, W*0.55);
   const m = Math.max(1, Math.floor(platz / n)), q = m*n;
   const qx = hoch ? Math.floor((W-q)/2) : 0, qy = hoch ? 0 : Math.floor((H-q)/2);
-  for (let r=0; r<n-4; r++) for (let k=0; k<n-4; k++)
-    if (qr.isDark(r,k)) ctx.fillRect(qx+(k+2)*m, qy+(r+2)*m, m, m);
+  for (let r=0; r<n-2*ruhe; r++) for (let k=0; k<n-2*ruhe; k++)
+    if (qr.isDark(r,k)) ctx.fillRect(qx+(k+ruhe)*m, qy+(r+ruhe)*m, m, m);
 
   // Text rechts neben (bzw. unter) dem QR-Code, automatisch verkleinert und umbrochen
   const tx = hoch ? 4 : q, tb = W - tx - 4;
@@ -388,22 +436,55 @@ function umbrechen(text, breite) {
 }
 async function etikettTeilen() {
   const blob = await new Promise(r => $("etikettCanvas").toBlob(r, "image/png"));
-  const file = new File([blob], aktuell.nr + ".png", { type:"image/png" });
-  if (navigator.canShare?.({ files:[file] })) {
-    try { await navigator.share({ files:[file], title:aktuell.nr }); } catch {}
-  } else {
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
-  }
+  teilen(new File([blob], aktuell.nr + ".png", { type:"image/png" }));
 }
-function druckerAnzeige() { $("druckerName").textContent = Drucker.name() || "nicht verbunden"; }
+function druckerAnzeige() {
+  const n = Drucker.name();
+  $("druckerName").textContent = !n ? "keiner ausgewählt"
+    : n + (Drucker.verbunden() ? " (" + (Drucker.modus() === "p22" ? "P22-Modus" : "ESC/POS") + ")" : " (gemerkt)");
+}
 async function druckerWaehlen() {
   try { await Drucker.verbinden(); druckerAnzeige(); toast("Drucker verbunden"); }
   catch(e) { toast(e.message); }
 }
-function druckerVergessen() { Drucker.trennen(); druckerAnzeige(); }
+function druckerVergessen() { Drucker.stopSuche?.(); Drucker.trennen(); $("suchBox").classList.add("hidden"); druckerAnzeige(); }
+async function druckerSuchen() {
+  if (!Drucker.kannSuchen()) return druckerWaehlen();        // Browser: Chrome-Auswahlfenster
+  const gefunden = new Map(), box = $("suchBox");
+  box.classList.remove("hidden"); $("suchStatus").textContent = "Suche läuft … Drucker einschalten und in die Nähe legen.";
+  $("suchListe").innerHTML = "";
+  const zeichne = () => {
+    const liste = [...gefunden.values()].sort((a, b) =>
+      (/p2[12]|olympia|print|label/i.test(b.name) - /p2[12]|olympia|print|label/i.test(a.name)) || b.rssi - a.rssi);
+    $("suchListe").innerHTML = liste.map(d => {
+      const balken = d.rssi > -60 ? "▂▄▆█" : d.rssi > -75 ? "▂▄▆" : d.rssi > -90 ? "▂▄" : "▂";
+      const tipp = /p2[12]|olympia/i.test(d.name) ? ' style="background:#e8f5ec"' : "";
+      return `<div class="geraet"${tipp} onclick="druckerVerbinden('${esc(d.id)}','${esc(d.name).replace(/'/g, "")}')">
+        <div><strong>${esc(d.name)}</strong><div class="klein">${esc(d.id)}</div></div>
+        <span class="klein">${balken}</span></div>`;
+    }).join("") || '<p class="klein">Noch nichts gefunden …</p>';
+  };
+  try {
+    await Drucker.suchen(d => { gefunden.set(d.id, d); zeichne(); },
+      () => { $("suchStatus").textContent = gefunden.size ? "Suche beendet – Drucker antippen:" : "Nichts gefunden. Bluetooth & Standort an? Drucker an?"; });
+    zeichne();
+  } catch (e) { $("suchStatus").textContent = "Suche nicht möglich: " + e.message; }
+}
+async function druckerVerbinden(id, name) {
+  $("suchStatus").textContent = "Verbinde mit " + name + " …";
+  try {
+    await Drucker.verbindenMit(id, name);
+    $("suchBox").classList.add("hidden"); druckerAnzeige();
+    toast("Verbunden: " + name);
+    if (Drucker.modus() === "p22" && !$("e_groesse").value.startsWith("p22:")) { $("e_groesse").value = "p22:40"; etikettZeichnen(); }
+  } catch (e) { $("suchStatus").textContent = "Verbinden fehlgeschlagen: " + e.message; }
+}
 async function etikettDrucken() {
   try {
-    if (!Drucker.verbunden()) { await Drucker.verbinden(); druckerAnzeige(); }
+    if (!Drucker.name()) { if (Drucker.kannSuchen()) { druckerSuchen(); return toast("Erst Drucker auswählen"); } await Drucker.verbinden(); druckerAnzeige(); }
+    const p22Groesse = $("e_groesse").value.startsWith("p22:");
+    if (Drucker.modus() === "p22" && !p22Groesse) { $("e_groesse").value = "p22:40"; etikettZeichnen(); }
+    if (Drucker.modus() !== "p22" && p22Groesse) { $("e_groesse").value = "40x30"; etikettZeichnen(); }
     toast("Drucke …");
     await Drucker.drucken($("etikettCanvas"));
     toast("Gedruckt ✓");
@@ -414,7 +495,13 @@ function localStorageGet(k) { try { return localStorage.getItem(k) || ""; } catc
 function localStorageSet(k,v) { try { localStorage.setItem(k,v); } catch {} }
 
 // Offline-Fähigkeit
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+if (!Nativ.ist && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+Nativ.zurueckTaste(() => {
+  if (stream) scanStoppen();
+  else if (!$("detail").classList.contains("hidden")) zeigeStart();
+  else if (!$("menue").classList.contains("hidden")) $("menue").classList.add("hidden");
+  else Nativ.beenden();
+});
 
 // Direktaufruf per Link: /?nr=XYZ  (praktisch, wenn der QR-Code eine URL enthält)
 const p = new URLSearchParams(location.search).get("nr");
