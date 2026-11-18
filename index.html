@@ -24,6 +24,8 @@
 <script src="qrcode.js"></script>
 <script src="drucker.js"></script>
 <script src="speicher.js"></script>
+<script src="jspdf.umd.min.js"></script>
+<script src="protokoll.js"></script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -58,6 +60,9 @@
   #etikettCanvas { max-width:100%; border:1px dashed #999; background:#fff; image-rendering:pixelated; display:block; margin:10px auto; }
   #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#333; color:#fff; padding:10px 18px; border-radius:20px; display:none; z-index:10; }
   .hidden { display:none !important; }
+  details.gruppe { border-top:1px solid #e3e6eb; margin-top:12px; padding-top:10px; }
+  details.gruppe > summary { font-weight:600; cursor:pointer; padding:4px 0; }
+  .warn { background:#fdecea; color:#c0392b; padding:6px 8px; border-radius:6px; font-size:13px; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -71,39 +76,81 @@
   <!-- ===== MENÜ ===== -->
   <section id="menue" class="karte hidden">
     <strong>Daten & Einstellungen</strong>
-    <div style="display:grid;gap:8px;margin-top:10px">
-      <button class="btn" onclick="exportCSV()">📊 Prüfliste als CSV (Excel) – alle Kunden</button>
-      <button class="btn" id="csvKundeBtn" onclick="exportCSV(Speicher.Register.einsatz().kunde)">📊 CSV nur aktueller Kunde</button>
-      <button class="btn" onclick="sicherungTeilen()">💾 Sicherung erstellen (alle Daten)</button>
-      <button class="btn hell" onclick="$('wiederFile').click()">♻ Sicherung einspielen</button>
-      <input type="file" id="wiederFile" accept=".json,application/json" class="hidden">
-    </div>
-    <label>Prüfer (wird bei jeder Prüfung eingetragen)</label>
-    <input id="e_pruefer" placeholder="Vor- und Nachname" onchange="Speicher.Register.setzePruefer(this.value); toast('Prüfer gespeichert')">
-    <button class="btn hell" style="width:100%;margin-top:12px" onclick="zeigeKunden()">👥 Kunden & Standorte verwalten</button>
-    <label>Drucksprache</label>
-    <select id="druckmodus" onchange="localStorageSet('druckmodus', this.value); Drucker.trennen(); druckerAnzeige(); toast('Drucker neu hinzufügen')">
-      <option value="auto">Automatisch erkennen</option>
-      <option value="p22">Olympia P22 / Nelko P21</option>
-      <option value="escpos">ESC/POS (andere Drucker)</option>
-    </select>
-    <label>P22: Lücke zwischen den Etiketten</label>
-    <select id="p22gap" onchange="localStorageSet('p22gap', this.value)">
-      <option value="0">keine Lücke (Endlosband)</option>
-      <option value="5">5 mm</option>
-      <option value="3">3 mm</option>
-      <option value="2">2 mm</option>
-      <option value="1.5">1,5 mm</option>
-    </select>
-    <label>P22: Druckdichte (Schwärze)</label>
-    <select id="p22dichte" onchange="localStorageSet('p22dichte', this.value)">
-      <option value="15">15 (sehr dunkel)</option>
-      <option value="12">12</option>
-      <option value="10">10</option>
-      <option value="8">8 (hell)</option>
-    </select>
-    <label>Präfix für neue Nummern</label>
-    <input id="praefix" placeholder="VDE-" onchange="Speicher.einst('praefix', this.value)">
+
+    <details class="gruppe" open><summary>📄 Berichte & Daten</summary>
+      <div style="display:grid;gap:8px;margin-top:10px">
+        <button class="btn" id="berichtKundeBtn" onclick="berichtKunde(Speicher.Register.einsatz().kunde)">📄 Prüfbericht (PDF) für aktuellen Kunden</button>
+        <button class="btn" onclick="berichtKunde('')">📄 Prüfbericht (PDF) – alle Geräte</button>
+        <button class="btn hell" id="csvKundeBtn" onclick="exportCSV(Speicher.Register.einsatz().kunde)">📊 CSV nur aktueller Kunde</button>
+        <button class="btn hell" onclick="exportCSV()">📊 CSV – alle Kunden</button>
+        <button class="btn hell" onclick="sicherungTeilen()">💾 Sicherung erstellen (alle Daten)</button>
+        <button class="btn hell" onclick="$('wiederFile').click()">♻ Sicherung einspielen</button>
+        <input type="file" id="wiederFile" accept=".json,application/json" class="hidden">
+      </div>
+    </details>
+
+    <details class="gruppe"><summary>🏢 Firma & Prüfer (für das Protokoll)</summary>
+      <label>Firma</label><input id="f_firma" placeholder="z. B. Muster Elektro GmbH" onchange="firmaSpeichern()">
+      <label>Anschrift</label><input id="f_anschrift" placeholder="Straße, PLZ Ort" onchange="firmaSpeichern()">
+      <label>Telefon / E-Mail</label><input id="f_kontakt" onchange="firmaSpeichern()">
+      <label>Prüfer (wird bei jeder Prüfung eingetragen)</label>
+      <input id="e_pruefer" placeholder="Vor- und Nachname" onchange="Speicher.Register.setzePruefer(this.value); toast('Prüfer gespeichert')">
+      <label>Qualifikation des Prüfers</label>
+      <select id="f_quali" onchange="firmaSpeichern()">
+        <option>Elektrofachkraft</option>
+        <option>Elektrotechnisch unterwiesene Person (EuP) unter Leitung einer Elektrofachkraft</option>
+        <option>Befähigte Person nach BetrSichV</option>
+      </select>
+      <label>Unterschrift</label>
+      <img id="f_unterschriftBild" class="hidden" style="max-width:220px;border:1px solid #ccd;border-radius:6px;background:#fff;display:block">
+      <button class="btn hell" style="margin-top:6px" onclick="unterschriftZeichnen()">✍ Unterschrift zeichnen</button>
+    </details>
+
+    <details class="gruppe"><summary>🔧 Messgeräte</summary>
+      <div id="mgListe" style="margin-top:8px"></div>
+      <div class="karte" style="background:#f6f7f9;box-shadow:none;margin-top:8px">
+        <strong class="klein">Messgerät hinzufügen</strong>
+        <div class="zeile"><div><label>Hersteller</label><input id="mg_hersteller" placeholder="z. B. Benning"></div>
+          <div><label>Typ</label><input id="mg_typ" placeholder="z. B. ST 755"></div></div>
+        <div class="zeile"><div><label>Seriennummer</label><input id="mg_sn"></div>
+          <div><label>Kalibriert bis</label><input id="mg_kal" type="month"></div></div>
+        <button class="btn" style="margin-top:10px;width:100%" onclick="messgeraetAnlegen()">＋ Messgerät speichern</button>
+      </div>
+    </details>
+
+    <details class="gruppe"><summary>👥 Kunden & Standorte</summary>
+      <button class="btn hell" style="width:100%;margin-top:10px" onclick="zeigeKunden()">Kunden & Standorte verwalten</button>
+    </details>
+
+    <details class="gruppe"><summary>🖨 Etikettendrucker</summary>
+      <label>Drucksprache</label>
+      <select id="druckmodus" onchange="localStorageSet('druckmodus', this.value); Drucker.trennen(); druckerAnzeige(); toast('Drucker neu hinzufügen')">
+        <option value="auto">Automatisch erkennen</option>
+        <option value="p22">Olympia P22 / Nelko P21</option>
+        <option value="escpos">ESC/POS (andere Drucker)</option>
+      </select>
+      <label>P22: Lücke zwischen den Etiketten</label>
+      <select id="p22gap" onchange="localStorageSet('p22gap', this.value)">
+        <option value="0">keine Lücke (Endlosband)</option>
+        <option value="5">5 mm</option>
+        <option value="3">3 mm</option>
+        <option value="2">2 mm</option>
+        <option value="1.5">1,5 mm</option>
+      </select>
+      <label>P22: Druckdichte (Schwärze)</label>
+      <select id="p22dichte" onchange="localStorageSet('p22dichte', this.value)">
+        <option value="15">15 (sehr dunkel)</option>
+        <option value="12">12</option>
+        <option value="10">10</option>
+        <option value="8">8 (hell)</option>
+      </select>
+    </details>
+
+    <details class="gruppe"><summary>⚙ Sonstiges</summary>
+      <label>Präfix für neue Nummern</label>
+      <input id="praefix" placeholder="VDE-" onchange="Speicher.einst('praefix', this.value)">
+    </details>
+
     <p class="klein" id="versionInfo"></p>
     <p class="klein">Alle Daten liegen nur auf diesem Handy. Erstelle regelmäßig eine Sicherung
       (z. B. nach Google Drive oder per Mail), damit beim Handy-Verlust nichts weg ist.</p>
@@ -165,7 +212,10 @@
         <div><label>Hersteller</label><input id="g_hersteller"></div>
         <div><label>Typ</label><input id="g_typ"></div>
       </div>
-      <label>Seriennummer</label><input id="g_seriennr">
+      <div class="zeile">
+        <div><label>Seriennummer</label><input id="g_seriennr"></div>
+        <div><label>Nenndaten</label><input id="g_nenndaten" placeholder="z. B. 230 V / 1200 W"></div>
+      </div>
       <div class="zeile">
         <div><label>Kunde</label><input id="g_kunde" list="dl_kunden" oninput="fuelleStandortVorschlaege()"></div>
         <div><label>Standort</label><input id="g_standort" list="dl_standorte"></div>
@@ -252,11 +302,25 @@
         <div><label>Datum</label><input id="p_datum" type="date"></div>
         <div><label>Prüfer</label><input id="p_pruefer"></div>
       </div>
+      <label>Prüfgrund</label>
+      <select id="p_grund">
+        <option value="wiederholung">Wiederholungsprüfung (DIN EN 50699 / VDE 0702)</option>
+        <option value="reparatur">Prüfung nach Reparatur (DIN EN 50678 / VDE 0701)</option>
+      </select>
+      <label>Messgerät</label>
+      <select id="p_mg" onchange="pruefeKalibrierung()"></select>
+      <div id="p_mgWarn" class="warn hidden"></div>
       <div class="check"><input type="checkbox" id="p_sicht" onchange="bewerten()"> Sichtprüfung ohne Mangel</div>
       <div id="feldRpe"><label>Schutzleiterwiderstand R<sub>PE</sub> [Ω]</label>
         <input id="p_rpe" inputmode="decimal" oninput="bewerten()"><div class="wert" id="w_rpe"></div></div>
       <label>Isolationswiderstand R<sub>ISO</sub> [MΩ]</label>
       <input id="p_riso" inputmode="decimal" oninput="bewerten()"><div class="wert" id="w_riso"></div>
+      <label>Messverfahren Ableitströme</label>
+      <select id="p_verfahren">
+        <option value="Differenzstrom">Differenzstromverfahren</option>
+        <option value="Direkt">Direktes Verfahren</option>
+        <option value="Ersatzableitstrom">Ersatzableitstromverfahren</option>
+      </select>
       <div id="feldIpe"><label>Schutzleiterstrom I<sub>PE</sub> [mA]</label>
         <input id="p_ipe" inputmode="decimal" oninput="bewerten()"><div class="wert" id="w_ipe"></div></div>
       <label>Berührungsstrom I<sub>B</sub> [mA]</label>
@@ -339,7 +403,7 @@ $("foto").addEventListener("change", e => {
 });
 
 // ---------- Gerät ----------
-const GF = ["bezeichnung","hersteller","typ","seriennr","standort","kunde","schutzklasse","intervall_monate"];
+const GF = ["bezeichnung","hersteller","typ","seriennr","nenndaten","standort","kunde","schutzklasse","intervall_monate"];
 async function oeffne(nr) {
   nr = (nr||"").trim(); if (!nr) return;
   try { const u = new URL(nr); if (u.searchParams.get("nr")) nr = u.searchParams.get("nr"); } catch {}
@@ -363,6 +427,7 @@ async function oeffne(nr) {
   $("p_nachtrag").checked = false; $("p_erg_ok").checked = true; fotoDaten = null;
   $("p_foto").value = ""; $("p_fotoVorschau").classList.add("hidden"); nachtragModus();
   $("p_datum").max = new Date().toISOString().slice(0,10);
+  $("p_grund").value = "wiederholung"; fuelleMessgeraetAuswahl();
   $("p_datum").value = new Date().toISOString().slice(0,10);
   $("p_pruefer").value = Speicher.Register.pruefer() || localStorageGet("pruefer");
   $("etikettKarte").classList.toggle("hidden", !!aktuell.neu);
@@ -379,15 +444,106 @@ async function neuesGeraet() {
 }
 function menue() {
   const m = $("menue"); m.classList.toggle("hidden");
+  const R = Speicher.Register, ek = R.einsatz().kunde, F = R.firma();
   $("druckmodus").value = localStorageGet("druckmodus") || "auto";
-  $("e_pruefer").value = Speicher.Register.pruefer();
-  const ek = Speicher.Register.einsatz().kunde;
-  $("csvKundeBtn").classList.toggle("hidden", !ek);
-  if (ek) $("csvKundeBtn").textContent = "📊 CSV nur für " + ek;
   $("p22gap").value = localStorageGet("p22gap") || "0";
   $("p22dichte").value = localStorageGet("p22dichte") || "15";
-  Speicher.art().then(a => $("versionInfo").textContent = "Version 9 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a); $("praefix").value = Speicher.einst("praefix");
+  $("e_pruefer").value = R.pruefer();
+  $("f_firma").value = F.firma || ""; $("f_anschrift").value = F.anschrift || ""; $("f_kontakt").value = F.kontakt || "";
+  $("f_quali").value = F.quali || "Elektrofachkraft";
+  if (F.unterschrift) { $("f_unterschriftBild").src = F.unterschrift; $("f_unterschriftBild").classList.remove("hidden"); }
+  zeigeMessgeraete();
+  $("berichtKundeBtn").classList.toggle("hidden", !ek);
+  $("csvKundeBtn").classList.toggle("hidden", !ek);
+  if (ek) { $("berichtKundeBtn").textContent = "📄 Prüfbericht (PDF) für " + ek; $("csvKundeBtn").textContent = "📊 CSV nur für " + ek; }
+  $("praefix").value = Speicher.einst("praefix");
+  Speicher.art().then(a => $("versionInfo").textContent = "Version 10 · " + (Nativ.ist ? "Android-App" : "Browser") + " · " + a);
   if (!m.classList.contains("hidden")) window.scrollTo(0,0);
+}
+
+// ---------- Firma, Unterschrift, Messgeräte ----------
+function firmaSpeichern() {
+  Speicher.Register.setzeFirma({ firma: $("f_firma").value.trim(), anschrift: $("f_anschrift").value.trim(),
+    kontakt: $("f_kontakt").value.trim(), quali: $("f_quali").value });
+  toast("Gespeichert");
+}
+function unterschriftZeichnen() {
+  const o = document.createElement("div");
+  o.style.cssText = "position:fixed;inset:0;background:#000b;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:10px";
+  o.innerHTML = `<div style="color:#fff">Mit dem Finger unterschreiben</div>
+    <canvas id="uCanvas" width="600" height="250" style="background:#fff;border-radius:8px;width:100%;max-width:600px;touch-action:none"></canvas>
+    <div class="zeile" style="width:100%;max-width:600px">
+      <button class="btn hell" id="uLeer">Löschen</button><button class="btn hell" id="uAbbr">Abbrechen</button>
+      <button class="btn" id="uOk">Übernehmen</button></div>`;
+  document.body.appendChild(o);
+  const c = o.querySelector("#uCanvas"), ctx = c.getContext("2d");
+  ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.strokeStyle = "#0a1f44";
+  let malt = false, leer = true;
+  const pos = e => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * c.width / r.width, (e.clientY - r.top) * c.height / r.height]; };
+  c.onpointerdown = e => { malt = true; leer = false; ctx.beginPath(); ctx.moveTo(...pos(e)); c.setPointerCapture(e.pointerId); };
+  c.onpointermove = e => { if (malt) { ctx.lineTo(...pos(e)); ctx.stroke(); } };
+  c.onpointerup = () => malt = false;
+  o.querySelector("#uLeer").onclick = () => { ctx.clearRect(0, 0, c.width, c.height); leer = true; };
+  o.querySelector("#uAbbr").onclick = () => o.remove();
+  o.querySelector("#uOk").onclick = () => {
+    if (leer) return toast("Bitte erst unterschreiben");
+    Speicher.Register.setzeFirma({ unterschrift: c.toDataURL("image/png") });
+    $("f_unterschriftBild").src = c.toDataURL("image/png"); $("f_unterschriftBild").classList.remove("hidden");
+    o.remove(); toast("Unterschrift gespeichert");
+  };
+}
+const monat = m => m ? m.split("-").reverse().join("/") : "–";
+const kalAbgelaufen = mg => mg?.kalibriert_bis && mg.kalibriert_bis < new Date().toISOString().slice(0, 7);
+function zeigeMessgeraete() {
+  const R = Speicher.Register, std = R.standardMG(), l = R.messgeraete();
+  $("mgListe").innerHTML = l.length ? l.map(m => `
+    <div class="geraet">
+      <label class="check" style="margin:0;align-items:flex-start">
+        <input type="radio" name="mgStd" ${m.id === std ? "checked" : ""} onchange="Speicher.Register.setzeStandardMG('${m.id}');toast('Standard-Messgerät gesetzt')">
+        <div><strong>${esc(m.hersteller)} ${esc(m.typ)}</strong>
+          <div class="klein">SN ${esc(m.seriennr || "–")} · kalibriert bis ${monat(m.kalibriert_bis)}
+          ${kalAbgelaufen(m) ? ' · <b style="color:#c0392b">Kalibrierung abgelaufen</b>' : ""}</div></div></label>
+      <a href="#" class="klein" style="color:#c0392b" onclick="messgeraetEntfernen('${m.id}');return false">entfernen</a>
+    </div>`).join("") + '<p class="klein">● = Standard bei neuen Prüfungen</p>'
+    : '<p class="klein">Noch kein Messgerät eingetragen.</p>';
+}
+function messgeraetAnlegen() {
+  const mg = { hersteller: $("mg_hersteller").value.trim(), typ: $("mg_typ").value.trim(),
+               seriennr: $("mg_sn").value.trim(), kalibriert_bis: $("mg_kal").value };
+  if (!mg.hersteller || !mg.typ) return toast("Hersteller und Typ eintragen");
+  Speicher.Register.messgeraetHinzu(mg);
+  ["mg_hersteller", "mg_typ", "mg_sn", "mg_kal"].forEach(id => $(id).value = "");
+  zeigeMessgeraete(); toast("Messgerät gespeichert");
+}
+function messgeraetEntfernen(id) {
+  if (confirm("Messgerät aus der Liste entfernen? (Alte Protokolle behalten ihre Angaben.)")) {
+    Speicher.Register.messgeraetLoeschen(id); zeigeMessgeraete(); }
+}
+function fuelleMessgeraetAuswahl() {
+  const R = Speicher.Register, l = R.messgeraete(), std = R.standardMG();
+  $("p_mg").innerHTML = l.length ? l.map(m => `<option value="${m.id}" ${m.id === std ? "selected" : ""}>${esc(m.hersteller)} ${esc(m.typ)}${m.seriennr ? " · SN " + esc(m.seriennr) : ""}</option>`).join("")
+    : '<option value="">– kein Messgerät eingetragen (☰ → Messgeräte) –</option>';
+  pruefeKalibrierung();
+}
+function pruefeKalibrierung() {
+  const mg = Speicher.Register.messgeraete().find(m => m.id === $("p_mg").value);
+  $("p_mgWarn").classList.toggle("hidden", !kalAbgelaufen(mg));
+  if (kalAbgelaufen(mg)) $("p_mgWarn").textContent = "⚠ Kalibrierung abgelaufen (" + monat(mg.kalibriert_bis) + ")";
+}
+async function protokollPDF(uid) {
+  const p = (aktuell.pruefungen || []).find(x => x.uid === uid); if (!p) return;
+  try { toast("Erstelle Protokoll …"); teilen(await Protokoll.einzeln(aktuell, p)); }
+  catch (e) { zeigeFehler("PDF: " + e.message); }
+}
+async function berichtKunde(kunde) {
+  try {
+    const alle = (await api("/api/geraete")).data.filter(g => !kunde || g.kunde === kunde);
+    if (!alle.length) return toast("Keine Geräte" + (kunde ? " für " + kunde : ""));
+    toast("Erstelle Prüfbericht …");
+    const voll = [];
+    for (const g of alle) voll.push((await api("/api/geraete/" + encodeURIComponent(g.nr))).data);
+    teilen(await Protokoll.bericht(voll, kunde));
+  } catch (e) { zeigeFehler("PDF: " + e.message); }
 }
 async function teilen(file) {
   if (Nativ.ist) return Nativ.teilen(file).catch(e => toast("Teilen fehlgeschlagen: " + e.message));
@@ -506,7 +662,7 @@ function zeigeHistorie() {
     ${x.nachgetragen ? ' <span class="badge neu">📜 nachgetragen</span>' : ""}<br>
     ${[x.rpe, x.riso, x.ipe, x.ib].some(v => v != null) ? `RPE ${x.rpe ?? "–"} Ω · RISO ${x.riso ?? "–"} MΩ · IPE ${x.ipe ?? "–"} mA · IB ${x.ib ?? "–"} mA` : '<span class="klein">keine Messwerte</span>'}
     ${x.bemerkung ? "<br><em>"+esc(x.bemerkung)+"</em>" : ""}
-    <div style="margin-top:4px">${x.foto ? `<a href="#" onclick="fotoZeigen('${x.uid}');return false">📷 Protokoll-Foto</a> · ` : ""}<a href="#" class="klein" style="color:#c0392b" onclick="pruefungLoeschen('${x.uid}');return false">löschen</a></div></div>`).join("") : "Noch keine Prüfung.";
+    <div style="margin-top:4px"><a href="#" onclick="protokollPDF('${x.uid}');return false">📄 Protokoll (PDF)</a> · ${x.foto ? `<a href="#" onclick="fotoZeigen('${x.uid}');return false">📷 Foto</a> · ` : ""}<a href="#" class="klein" style="color:#c0392b" onclick="pruefungLoeschen('${x.uid}');return false">löschen</a></div></div>`).join("") : "Noch keine Prüfung.";
 }
 
 // ---------- Bewertung (Standard-Grenzwerte VDE 0701-0702) ----------
@@ -575,6 +731,9 @@ async function pruefungSpeichern() {
   const bestanden = nachtrag ? $("p_erg_ok").checked : (bewerten() || $("p_manuell").checked);
   const body = {
     nachgetragen: nachtrag, foto: nachtrag ? fotoDaten : null,
+    grund: $("p_grund").value, verfahren: $("g_schutzklasse").value === "III" ? "" : $("p_verfahren").value,
+    messgeraet: (() => { const m = Speicher.Register.messgeraete().find(x => x.id === $("p_mg").value);
+                         return m ? { hersteller: m.hersteller, typ: m.typ, seriennr: m.seriennr, kalibriert_bis: m.kalibriert_bis } : null; })(),
     datum:$("p_datum").value, pruefer:$("p_pruefer").value.trim(),
     sichtpruefung: nachtrag && !$("p_sicht").checked ? null : $("p_sicht").checked,
     funktion: nachtrag && !$("p_funktion").checked ? null : $("p_funktion").checked,

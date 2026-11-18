@@ -98,7 +98,9 @@ const Speicher = (() => {
         funktion: body.funktion == null ? null : body.funktion ? 1 : 0,
         rpe: zahl(body.rpe), riso: zahl(body.riso), ipe: zahl(body.ipe), ib: zahl(body.ib),
         bestanden: body.bestanden ? 1 : 0, bemerkung: body.bemerkung || "",
-        nachgetragen: body.nachgetragen ? 1 : 0, foto: body.foto || null });
+        nachgetragen: body.nachgetragen ? 1 : 0, foto: body.foto || null,
+        grund: body.grund || "wiederholung", verfahren: body.verfahren || "",
+        messgeraet: body.messgeraet || null });
       g.geaendert = jetzt();
       await lege(g); return { status: 200, data: mitStatus(g) };
     }
@@ -150,6 +152,23 @@ const Speicher = (() => {
     setzeEinsatz(k, o) { const r = reg(); r.einsatz = { kunde: k || "", standort: o || "" }; regSpeichern(r); },
     pruefer: () => reg().pruefer || einst("pruefer_alt") || "",
     setzePruefer(n) { const r = reg(); r.pruefer = (n || "").trim(); regSpeichern(r); },
+    // Firma / Prüfer-Angaben fürs Protokoll
+    firma: () => reg().firma || {},
+    setzeFirma(f) { const r = reg(); r.firma = { ...(r.firma || {}), ...f }; regSpeichern(r); },
+    // Messgeräte
+    messgeraete: () => reg().messgeraete || [],
+    standardMG: () => reg().standardMG || (reg().messgeraete || [])[0]?.id || "",
+    messgeraetHinzu(mg) {
+      const r = reg(); r.messgeraete ??= [];
+      mg.id = Date.now().toString(36); r.messgeraete.push(mg);
+      if (!r.standardMG) r.standardMG = mg.id;
+      regSpeichern(r); return mg.id;
+    },
+    messgeraetLoeschen(id) {
+      const r = reg(); r.messgeraete = (r.messgeraete || []).filter(m => m.id !== id);
+      if (r.standardMG === id) r.standardMG = r.messgeraete[0]?.id || ""; regSpeichern(r);
+    },
+    setzeStandardMG(id) { const r = reg(); r.standardMG = id; regSpeichern(r); },
     alles: () => reg(),
     einspielen(neu) {                                   // zusammenführen, nichts überschreiben
       if (!neu || !neu.kunden) return;
@@ -159,6 +178,10 @@ const Speicher = (() => {
         for (const o of v.standorte || []) if (!r.kunden[k].standorte.includes(o)) r.kunden[k].standorte.push(o);
       }
       if (!r.pruefer && neu.pruefer) r.pruefer = neu.pruefer;
+      if (!r.firma && neu.firma) r.firma = neu.firma;
+      for (const m of neu.messgeraete || [])
+        if (!(r.messgeraete ||= []).some(x => x.id === m.id)) r.messgeraete.push(m);
+      if (!r.standardMG && neu.standardMG) r.standardMG = neu.standardMG;
       regSpeichern(r);
     },
   };

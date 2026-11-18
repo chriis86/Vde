@@ -1,6 +1,6 @@
 // Service Worker: speichert die App auf dem Handy, damit sie ohne Internet startet.
-const VERSION = "vde-v9";
-const DATEIEN = ["./", "index.html", "jsQR.js", "qrcode.js", "drucker.js", "speicher.js", "nativ.js",
+const VERSION = "vde-v10";
+const DATEIEN = ["./", "index.html", "jsQR.js", "qrcode.js", "drucker.js", "speicher.js", "nativ.js", "jspdf.umd.min.js", "protokoll.js",
                  "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(DATEIEN)).then(() => self.skipWaiting()));
